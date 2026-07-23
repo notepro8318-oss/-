@@ -92,6 +92,9 @@
   }
   .date-nav-btn:hover:not(:disabled){ color: var(--accent); border-color: var(--accent); }
   .date-nav-btn:disabled{ opacity: .35; cursor: not-allowed; }
+  .date-nav-btn.spinning{ animation: spin .5s ease; }
+  @keyframes spin{ from{ transform: rotate(0deg); } to{ transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce){ .date-nav-btn.spinning{ animation: none; } }
   .theme-toggle{
     width: 38px; height: 38px; border-radius: 10px; border: 1px solid var(--line);
     background: var(--surface); color: var(--text); cursor: pointer; font-size: 16px;
@@ -197,9 +200,19 @@
   footer{ margin-top: 46px; padding-top: 18px; border-top: 1px solid var(--line); font-size: 11.5px; color: var(--text-faint); font-family: var(--mono); line-height: 1.9; }
 
   ::selection{ background: var(--accent-soft); color: var(--accent-ink); }
+
+  .toast{
+    position: fixed; left: 50%; bottom: 26px; transform: translateX(-50%) translateY(16px);
+    background: var(--text); color: var(--bg); padding: 10px 18px; border-radius: 999px;
+    font-size: 13px; font-weight: 700; box-shadow: var(--shadow); opacity: 0; pointer-events: none;
+    transition: opacity .25s ease, transform .25s ease; z-index: 50; white-space: nowrap;
+  }
+  .toast.show{ opacity: 1; transform: translateX(-50%) translateY(0); }
+
   @media (max-width: 560px){
     .toolbar{ flex-direction: column; align-items: stretch; }
     .toolbar-controls{ justify-content: space-between; }
+    .toast{ font-size: 12px; white-space: normal; text-align: center; width: 88%; }
   }
 </style>
 
@@ -217,6 +230,7 @@
         <input type="date" id="datePicker" />
       </div>
       <button class="date-nav-btn" id="nextDay" type="button" aria-label="다음 거래일" title="다음 거래일">→</button>
+      <button class="date-nav-btn" id="refreshBtn" type="button" aria-label="최신 데이터로 업데이트" title="최신 데이터로 업데이트">🔄</button>
       <button class="theme-toggle" id="themeToggle" type="button" aria-label="테마 전환" title="라이트/다크 모드 전환">🌙</button>
     </div>
   </div>
@@ -229,85 +243,85 @@
   <div class="macro-block">
     <div class="macro-title-row">
       <h3>⚙️ 실시간 매크로 스냅샷 (금리·환율·원자재·변동성)</h3>
-      <span>기준: 2026.07.21 06:00 KST · 날짜 조회와 무관하게 최신값 고정</span>
+      <span>기준: 2026.07.23 06:00 KST · 날짜 조회와 무관하게 최신값 고정</span>
     </div>
     <div class="macro-grid">
-      <div class="tick"><div class="tick-label">US 10Y</div><div class="tick-value">4.55%</div><div class="pill flat">유가발 상단압력</div></div>
-      <div class="tick"><div class="tick-label">US 2Y</div><div class="tick-value">4.15%</div><div class="pill flat">10s2s +0.37%p</div></div>
-      <div class="tick"><div class="tick-label">DXY</div><div class="tick-value">100.72</div><div class="pill down">▼ 0.04%</div></div>
-      <div class="tick"><div class="tick-label">WTI</div><div class="tick-value">$84.6</div><div class="pill up">장중 $90 터치</div></div>
-      <div class="tick"><div class="tick-label">VIX</div><div class="tick-value">17.2</div><div class="pill flat">지정학 대비 저평가</div></div>
-      <div class="tick"><div class="tick-label">USD/KRW</div><div class="tick-value">1,475</div><div class="pill up">원화 강세 전환</div></div>
-      <div class="tick"><div class="tick-label">Fed Funds</div><div class="tick-value">3.50–3.75</div><div class="pill flat">동결 확률 79.5%</div></div>
+      <div class="tick"><div class="tick-label">US 10Y</div><div class="tick-value">4.66%</div><div class="pill up">2개월 최고치</div></div>
+      <div class="tick"><div class="tick-label">US 2Y</div><div class="tick-value">4.26%</div><div class="pill flat">10s2s +0.40%p</div></div>
+      <div class="tick"><div class="tick-label">DXY</div><div class="tick-value">101.1</div><div class="pill up">4거래일 연속 상승</div></div>
+      <div class="tick"><div class="tick-label">WTI</div><div class="tick-value">$86.8</div><div class="pill up">6주 최고, 장중 $88대</div></div>
+      <div class="tick"><div class="tick-label">VIX</div><div class="tick-value">16.6</div><div class="pill down">▼ 2.4%, 3중 리스크 대비 저평가</div></div>
+      <div class="tick"><div class="tick-label">USD/KRW</div><div class="tick-value">1,480</div><div class="pill down">원화 약세 재전환</div></div>
+      <div class="tick"><div class="tick-label">Fed Funds</div><div class="tick-value">3.50–3.75</div><div class="pill up">7월 인상 확률 급등</div></div>
     </div>
   </div>
 
   <div class="flow-note">
-    <b>자금이동 한 줄 요약 —</b> 유가 급등에도 국채·달러로의 뚜렷한 안전자산 쏠림은 나타나지 않았다. 주식에서 빠진 자금은 마땅한 대체 자산 없이 단기 현금성 자산에서 관망 중이며, VIX가 상대적으로 눌려있어 헤지 비용은 아직 저렴한 구간이다.
+    <b>자금이동 한 줄 요약 —</b> 유가·금리가 동반 상승하는데도 VIX는 오히려 낮아지는 미스매치가 나타나고 있다. 채권에서는 장기물이 매도되고 단기물로 자금이 쏠리는 커브 스티프닝이 이어지는 반면, 주식은 아직 뚜렷한 이탈 없이 대형 기술주 실적 결과를 관망 중이다.
   </div>
 
   <section>
     <div class="sec-head">
       <h2 class="sec-title">🔍 오늘의 핵심 이슈 Deep-Dive</h2>
-      <span class="badge-live">AS OF 07.21 최신 분석</span>
+      <span class="badge-live">AS OF 07.23 최신 분석</span>
     </div>
 
     <div class="issue-card">
-      <div class="issue-title"><span class="issue-tag">GEOPOLITICS</span> 미-이란 공습 9일째, 유가·안보 리스크의 구조화</div>
+      <div class="issue-title"><span class="issue-tag">GEOPOLITICS</span> 미-이란 공습 11일째, 임시 휴전 파기 — 유가 6주 최고치</div>
       <div class="field">맥락 Context</div>
-      <p>2025년 6월 이스라엘-이란 개전 이후 2026년 2월 말 미국이 이란 지도부·미사일기지 공습에 가담하며 확전됐고, 현재 미국의 대이란 공습이 9일 연속 이어지고 있다. 이란은 역내 동맹을 통해 보복 중이며, 후티 반군은 사우디 원유 수출 봉쇄 가능성까지 거론하고 있다.</p>
+      <p>2025년 6월 개전, 2026년 2월 말 미국 참전 이후 이어진 미-이란 무력충돌이 11일 연속 공습으로 확대됐다. 한때 거론되던 임시 휴전안은 사실상 파기됐고, 후티 반군의 사우디 원유 수출 봉쇄 위협도 여전히 살아있다.</p>
       <div class="field">이면의 의미</div>
-      <p>일회성 지정학 이벤트가 아니라 전세계 원유의 약 20%가 지나는 <strong>호르무즈 해협 봉쇄 리스크</strong>까지 걸린 에너지 공급망 구조 문제다. 골드만삭스는 이번 사태로 이란산 원유 공급이 최대 하루 175만 배럴 차질을 빚을 수 있다고 추정한다.</p>
+      <p>WTI는 6주 만에 최고치(장중 $88선)를 기록했다. 이는 단순 리스크 프리미엄을 넘어 <strong>헤드라인 인플레이션 통계에 실질적으로 반영되는 단계</strong>로 진입했다는 의미다. 일부 지역 휘발유 가격은 갤런당 $4를 재돌파했다.</p>
       <div class="field">파급 효과 Ripple Effect</div>
-      <p><strong>주식</strong> 에너지·방산 섹터 상대강세, 항공·여행 등 유가민감 소비재 마진 압박 / <strong>채권</strong> 유가발 인플레 재점화 시 연준 피벗 지연 → 장기금리 상단 재테스트 리스크 / <strong>부동산</strong> 모기지금리 상단 고착 시 주거용 리츠·주택거래 회복 지연.</p>
+      <p><strong>주식</strong> 에너지·방산 섹터 강세 지속, 항공·운송 등 유가민감 업종 마진 압박 심화 / <strong>채권</strong> 유가발 인플레가 실제 지표에 반영되며 장기금리 2개월 최고치 경신 / <strong>부동산</strong> 모기지금리 추가 상단 리스크로 주택 거래 회복 지연.</p>
     </div>
 
     <div class="issue-card">
-      <div class="issue-title"><span class="issue-tag">FED</span> 디스인플레 vs 매파 발언 — 신임 워시 의장 체제의 메시지 혼선</div>
+      <div class="issue-title"><span class="issue-tag">FED</span> '동결'에서 '인상'으로 — 연준 내러티브의 급반전</div>
       <div class="field">맥락 Context</div>
-      <p>6월 CPI는 헤드라인 3.5%(예상 3.8% 하회), 근원 2.6%로 시장 예상을 밑돌며 디스인플레 신호를 보냈다. 그러나 클리블랜드 연은 해맥 총재는 "기업들에게서 금리 인상이 필요하다는 이야기를 듣고 있다"는 매파적 발언을 내놨다. 연준은 케빈 워시 신임 의장 체제에서 기준금리 3.50~3.75%를 동결했고, 시장은 다음 회의 동결 확률을 79.5%로, 연내 인하는 1회 정도만 반영하고 있다.</p>
+      <p>불과 일주일 전만 해도 시장은 연내 소폭 인하 가능성을 일부 반영했지만, 유가발 인플레 재점화와 워시 의장의 매파 발언이 겹치며 분위기가 급변했다. 5월 CPI는 전년비 4.2%(근원 2.9%), 연준이 선호하는 PCE는 4.1%(근원 3.4%)까지 높아졌다. FOMC 위원 18명 중 9명이 연내 최소 1회 인상을 예상했고, 연말 기준금리 중간전망치는 3.4%에서 3.8%로 상향 조정됐다.</p>
       <div class="field">이면의 의미</div>
-      <p>물가지표는 식고 있는데 유가발 헤드라인 인플레 재상승 위험이 겹치며 연준 내부 메시지가 엇갈리고 있다. 신임 의장 체제 초기 신뢰 구축 국면이라 섣부른 완화 신호를 주기 어렵고, <strong>"higher-for-longer" 고착 리스크</strong>가 재부각되는 양상이다.</p>
+      <p>단순 매파 발언 수준을 넘어 <strong>연준 점도표의 궤적 자체가 인하에서 인상 쪽으로 이동</strong>했다는 의미다. 시장은 이번 달 회의에서의 깜짝 인상 가능성까지 일부 반영하기 시작했다 — 올해 초만 해도 상상하기 어려웠던 시나리오다.</p>
       <div class="field">파급 효과 Ripple Effect</div>
-      <p><strong>채권</strong> 단기물 변동성 확대, 커브 스티프닝 베팅 유효 / <strong>주식</strong> 밸류에이션 부담 큰 무이익 성장주(AI 테마)가 상대적으로 취약 / <strong>부동산</strong> 모기지금리 하락 지연으로 리파이낸싱·거래량 회복 지연.</p>
+      <p><strong>채권</strong> 단기물 중심 추가 약세(수익률 상승) 압력, 스티프닝에서 플래트닝으로 재전환 리스크 / <strong>주식</strong> 밸류에이션 배수 압축 리스크가 전 섹터로 확산, 특히 고PER 성장주 타격 / <strong>부동산</strong> 모기지금리 추가 상승 시 리츠·주택시장 조정 국면 장기화.</p>
     </div>
 
     <div class="issue-card">
-      <div class="issue-title"><span class="issue-tag">EARNINGS</span> 빅테크 실적 시즌 개막 — AI 트레이드의 "다음 촉매" 탐색</div>
+      <div class="issue-title"><span class="issue-tag">EARNINGS</span> 알파벳·테슬라 '어닝 쇼크' — AI capex 부담 현실화</div>
       <div class="field">맥락 Context</div>
-      <p>이번 주 알파벳·인텔·IBM·테슬라를 비롯해 3M·GM·헐리버턴·캐피털원 등 다양한 업종의 실적 발표가 몰려있다. 최근 반도체주가 재차 조정을 받으며 시장은 2년 넘게 이어진 AI 설비투자(capex)가 실제 수익으로 전환되는지 증거를 요구하고 있다.</p>
+      <p>알파벳은 매출 1,198억 달러로 컨센서스(1,169억 달러)를 상회하고 클라우드 매출도 82% 급증했지만, 올해 capex 전망치를 1,950억→2,050억 달러로 상향하며 시간외 주가가 4%대 급락했다. 테슬라는 매출($282억)이 예상치를 웃돌았음에도 주당순이익이 $0.33으로 예상($0.51)을 크게 밑돌았고, 매출총이익률도 16.8%로 예상(19.4%)을 하회하며 역시 시간외 4%대 급락했다. 인텔은 오늘(23일) 장 마감 후 실적을 발표한다.</p>
       <div class="field">이면의 의미</div>
-      <p>AI capex 랠리가 "투자 서사" 국면에서 <strong>"수익화 증명" 국면</strong>으로 전환되는 변곡점이다. 실적이 기대를 하회하면 밸류에이션 재평가(멀티플 압축)가 트리거될 수 있다.</p>
+      <p>두 회사 모두 "매출은 견조하나 수익성·비용 부담이 기대를 하회"하는 동일한 패턴을 보였다. <strong>AI 투자 사이클의 채점 기준이 '얼마나 쓰는가'에서 '얼마나 버는가'로 완전히 전환</strong>됐음을 보여주는 신호다.</p>
       <div class="field">파급 효과 Ripple Effect</div>
-      <p><strong>주식</strong> 실적 결과에 따라 나스닥 전반의 변동성 확대, 반도체 밸류체인 쏠림 해소 여부 결정 / <strong>채권</strong> capex 축소 시그널은 회사채 발행 감소로 크레딧 스프레드 안정 요인 / <strong>부동산</strong> 데이터센터 리츠는 실적 결과에 직접 연동, 단기 변동성 확대 예상.</p>
+      <p><strong>주식</strong> 빅테크 실적 초반 부진으로 나스닥 전반 밸류에이션 재평가 압력 확대, 오늘 인텔 실적이 반도체 섹터 방향성의 추가 시금석 / <strong>채권</strong> capex 우려로 빅테크 회사채 발행 프리미엄 확대 가능성 / <strong>부동산</strong> 데이터센터 리츠는 AI capex 지속 여부에 민감하게 반응할 구간.</p>
     </div>
   </section>
 
   <section>
     <div class="sec-head">
       <h2 class="sec-title">📈 시장 방향성 예측</h2>
-      <span class="badge-live">AS OF 07.21 최신 분석</span>
+      <span class="badge-live">AS OF 07.23 최신 분석</span>
     </div>
 
     <h3 class="sub">한국·아시아 오늘 흐름</h3>
-    <p>코스피는 전일 블랙먼데이 급락(-4%대)에 따른 반도체주 반등 기대와 원/달러 환율 1,475원대 하락(원화 강세)에 힘입어 반등을 시도할 가능성이 있다. 12개월 선행 PER이 6배를 밑돌 만큼 밸류에이션 매력은 유효하지만, 미-이란 갈등에 따른 변동성은 여전히 크다. 일본은 마리네 데이(바다의날) 휴장으로 방향성 확인이 하루 늦춰지며, 대만 등 반도체 서플라이체인 국가는 간밤 나스닥 흐름에 연동될 가능성이 있다.</p>
+    <p>코스피는 전일 개장 직후 7,000선을 회복했다가 차익실현에 상승분을 상당 부분 반납한 채 마감해, 오늘은 방향성 탐색 구간이 예상된다. 알파벳·테슬라의 실적 쇼크가 반도체·AI 밸류체인 전반에 부담을 줄 수 있어 삼성전자·SK하이닉스 등 주요 종목의 초반 변동성이 클 전망이다. 원/달러 환율이 1,480원대로 재상승(원화 약세 전환)한 점도 외국인 수급에는 부담 요인이다.</p>
 
     <h3 class="sub">사이클 위치 &amp; Tail Risk</h3>
-    <p>현재 시장은 <strong>강세장 후반부 내의 조정 국면(correction within bull market)</strong>으로 진단된다. 밸류에이션 부담(특히 AI 메가캡)과 지정학 리스크가 겹치며 단기 변동성이 확대되고 있지만, 디스인플레이션·견조한 실적이라는 중기 추세는 아직 훼손되지 않았다.</p>
+    <p>연준 내러티브가 '인하 기대'에서 '인상 리스크'로 급격히 재조정되며, 시장은 강세장 후반부 조정 국면에서 한 단계 더 방어적인 국면으로 이동하고 있다. 밸류에이션 부담, 지정학 리스크에 이어 이제 정책금리 경로 불확실성까지 세 겹의 악재가 겹치는 모습이다.</p>
     <ul>
-      <li><strong>Tail Risk ①</strong> 호르무즈 해협 봉쇄 현실화 시 유가 추가 급등(과거 분석 기준 최대 +35% 시나리오)</li>
-      <li><strong>Tail Risk ②</strong> 빅테크 실적 쇼크로 AI 밸류에이션 급격한 디레이팅</li>
-      <li><strong>Tail Risk ③</strong> 연준의 매파 서프라이즈 — 동결을 넘어선 인상 시그널</li>
+      <li><strong>Tail Risk ①</strong> 호르무즈 해협 봉쇄 현실화 시 유가 추가 급등</li>
+      <li><strong>Tail Risk ②</strong> 7월 FOMC 깜짝 인상 — 현재는 낮은 확률이나 유가 추이에 따라 빠르게 재평가 가능</li>
+      <li><strong>Tail Risk ③</strong> 인텔 등 빅테크 실적 시즌 후반부까지 부진이 이어질 경우 AI 밸류에이션 전반 디레이팅</li>
     </ul>
 
     <h3 class="sub">쏠림 · 과열 진단</h3>
-    <p>AI 메가캡으로의 대형 기술주 쏠림은 밸류에이션 부담과 함께 여전히 지속 중이다. 반면 VIX 17선은 지정학 리스크 수준 대비 <strong>과소평가된 변동성</strong>으로 판단되며, 풋옵션·변동성 헤지 비용이 상대적으로 저렴한 구간이다.</p>
+    <p>VIX는 오히려 16.6까지 낮아지며, 유가·금리·실적이라는 3중 리스크에도 시장의 경계감이 아직 충분히 반영되지 않은 모습이다. 이는 <strong>변동성 매수(헤지)의 상대적 매력이 여전히 유효함</strong>을 시사한다.</p>
   </section>
 
   <section>
     <div class="sec-head">
       <h2 class="sec-title">💡 20년 차 투자가의 실전 인사이트</h2>
-      <span class="badge-live">AS OF 07.21 최신 분석</span>
+      <span class="badge-live">AS OF 07.23 최신 분석</span>
     </div>
 
     <div class="strategy-block">
@@ -315,34 +329,34 @@
       <div class="long-short">
         <div class="ls-box long">
           <b>LONG 주목</b>
-          <p>에너지(업스트림), 방산(오늘 실적 발표하는 노스롭그루먼 등), 헬스케어·필수소비재 등 경기방어주 — 유가 상승과 지정학 리스크의 직접 수혜/방어 조합</p>
+          <p>에너지(업스트림), 방산, 헬스케어·필수소비재 등 경기방어주, 그리고 금리 상승 국면에서 순이자마진(NIM) 개선이 기대되는 은행주 — 유가·금리 상승의 직접 수혜/방어 조합</p>
         </div>
         <div class="ls-box short">
           <b>SHORT / 주의</b>
-          <p>항공·크루즈 등 유가민감 소비재, 밸류에이션 부담이 큰 무이익 AI 테마주, 정치 불확실성이 겹친 영국 내수주</p>
+          <p>고PER 무이익 AI 테마주(밸류에이션 재평가 리스크 확대), 항공·크루즈 등 유가민감 소비재, 장기 듀레이션 리츠</p>
         </div>
       </div>
     </div>
 
     <div class="strategy-block">
       <div class="strategy-label">Fixed Income · 채권/매크로</div>
-      <p>커브 스티프닝 기조(단기물 비중 확대, 장기 듀레이션 축소)를 유지한다. 유가발 인플레 서프라이즈에 대비해 물가연동채(TIPS) 일부 편입을 고려할 시점이다. 원/달러가 1,475원대로 강세 전환한 것은 외국인 수급 개선 신호로, 원화 자산 비중 확대 타이밍을 점검할 만하다.</p>
+      <p>연준 내러티브가 인하에서 인상 쪽으로 급선회한 만큼, 커브 스티프닝 베팅은 일부 되돌리고 명목채 듀레이션은 당분간 짧게 가져가는 것이 합리적이다. 유가발 인플레 서프라이즈에 대비해 물가연동채(TIPS) 비중 확대는 여전히 유효하다. 원/달러가 1,480원대로 재상승한 만큼 원화 자산 비중 확대는 서두르지 말고 환율 안정 신호를 확인한 뒤 접근할 시점이다.</p>
     </div>
 
     <div class="strategy-block">
       <div class="strategy-label">Real Assets · 부동산/대체투자</div>
-      <p>모기지금리 상단이 고착되면 주거용 리츠보다 AI capex와 연동되는 데이터센터·디지털 인프라 리츠가 상대적으로 매력적이다. 다만 이번 주 빅테크 실적이 스윙 팩터임을 유념할 것. 에너지 인프라 등 실물자산은 지정학 프리미엄의 직접 수혜가 가능하다.</p>
+      <p>모기지금리가 추가로 오를 경우 주거용 리츠와 데이터센터 리츠 모두 단기 조정 압력에 노출된다. 특히 데이터센터 리츠는 이번 주 빅테크 capex 가이던스 결과에 민감하게 반응할 구간이다. 다만 에너지 인프라·원자재 관련 실물자산은 지정학 프리미엄의 직접 수혜가 지속될 전망이다.</p>
     </div>
 
     <div class="maxim">
       "시장이 공포에 질려 있을 때 기회가 있고, 시장이 안심하고 있을 때 리스크가 숨어 있다."
-      <span>오늘의 VIX 17은 안심 구간 — 헤지를 게을리하지 말 것</span>
+      <span>오늘의 VIX 16은 안심 구간 그 이상 — 헤지를 게을리하지 말 것</span>
     </div>
   </section>
 
   <footer>
-    DATA SOURCES — CNBC · Yahoo Finance · Bloomberg · The Street · Washington Post · TradingEconomics · FRED(St. Louis Fed) · Investing.com · 서울경제 · 아시아경제 · 키움증권 모닝리포트(뉴스핌 인용)<br>
-    지수 아카이브는 현재 2026.07.20~07.21 2개 거래일분이 검증되어 제공되며, 순차적으로 확대됩니다. 코스피 등 변동성이 극심했던 일부 수치는 복수 매체 속보를 종합한 근사치로 공식 종가와 오차가 있을 수 있습니다.<br>
+    DATA SOURCES — CNBC · Yahoo Finance · Bloomberg · The Street · ABC News · TradingEconomics · FRED(St. Louis Fed) · Investing.com · FXStreet · Businesskorea · 키움증권 모닝리포트(뉴스핌 인용)<br>
+    지수 아카이브는 현재 2026.07.20, 07.21, 07.23 총 3개 거래일분이 검증되어 제공되며, 순차적으로 확대됩니다(07.22는 데이터 정합성 확인 후 추가 예정). 코스피 등 변동성이 극심했던 일부 수치는 복수 매체 속보를 종합한 근사치로 공식 종가와 오차가 있을 수 있습니다.<br>
     본 자료는 투자 참고용이며 투자 손실에 대한 법적 책임을 지지 않습니다. 최종 투자 판단은 독자 본인에게 있습니다.
   </footer>
 
@@ -392,6 +406,27 @@
         kospi:    { label:"코스피",      value:"~6,820",    chg:"▼ 4.1%",  pct:-4.1, note:"블랙먼데이(속보 종합치)" }
       },
       context: "영국 신임 총리(앤디 버넘) 취임발 불확실성과 미-이란 충돌 격화로 유럽 증시 혼조. 코스피는 반도체 투매 여진으로 -4%대 블랙먼데이를 기록했다."
+    },
+    "2026-07-23": {
+      title: "일간 모닝 브리핑",
+      meta: "2026.07.23 (목) 06:00 KST · 미국 07.22(수) 정규장 종가 기준",
+      us: {
+        sp500:  { label:"S&P 500",      value:"7,498.96",  chg:"▼ 10.24",  pct:-0.14 },
+        nasdaq: { label:"Nasdaq Comp.", value:"25,690.90", chg:"▼ 146.31", pct:-0.57 },
+        dow:    { label:"Dow Jones",    value:"52,218.58", chg:"▼ 6.06",   pct:-0.01 }
+      },
+      europe: {
+        dax:  { label:"DAX",      value:"25,155.41", chg:"▲ 144.06", pct:0.58 },
+        cac:  { label:"CAC 40",   value:"8,437.89",  chg:"▲ 74.75",  pct:0.89 },
+        ftse: { label:"FTSE 100",value:"10,716.97", chg:"▲ 131.06", pct:1.24 }
+      },
+      asia: {
+        nikkei:   { label:"Nikkei 225", value:"66,115.60", chg:"▼ 116.59", pct:-0.18, note:"전일 급등 후 숨고르기" },
+        shanghai: { label:"상하이종합",  value:"3,867.03",  chg:"▲ 2.67",   pct:0.07, note:"" },
+        hangseng: { label:"항셍지수",    value:"24,892.66", chg:"▼ 239.63", pct:-0.95, note:"" },
+        kospi:    { label:"코스피",      value:"~6,850",    chg:"▲ 0.8%(추정)", pct:0.8, note:"개장 직후 7,000선 회복 후 차익실현 반납(속보 종합)" }
+      },
+      context: "美 반도체 랠리 여진 속 국제유가 6주 최고치 경신(WTI 장중 $88대), 미-이란 공습 11일째. 알파벳·테슬라는 실적 발표 후 시간외 4%대 동반 급락. 코스피는 개장 직후 7,000선을 회복했으나 오후 차익실현에 상승폭 상당 부분을 반납했다."
     }
   };
 
@@ -401,9 +436,13 @@
   var picker = document.getElementById('datePicker');
   var prevBtn = document.getElementById('prevDay');
   var nextBtn = document.getElementById('nextDay');
+  var refreshBtn = document.getElementById('refreshBtn');
   var root = document.getElementById('dashboardRoot');
   var titleEl = document.getElementById('briefTitle');
   var metaEl = document.getElementById('briefMeta');
+  var toastEl = null;
+  var toastTimer = null;
+  var reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
   picker.min = minDate; picker.max = maxDate; picker.value = maxDate;
 
@@ -442,13 +481,24 @@
     if(ARCHIVE[val]) return val;
     if(val < minDate) return minDate;
     if(val > maxDate) return maxDate;
-    // pick nearest available key
     var best = maxDate, bestDiff = Infinity;
     dates.forEach(function(k){
       var diff = Math.abs(new Date(k) - new Date(val));
       if(diff < bestDiff){ bestDiff = diff; best = k; }
     });
     return best;
+  }
+
+  function showToast(msg){
+    if(!toastEl){
+      toastEl = document.createElement('div');
+      toastEl.className = 'toast';
+      document.body.appendChild(toastEl);
+    }
+    toastEl.textContent = msg;
+    requestAnimationFrame(function(){ toastEl.classList.add('show'); });
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function(){ toastEl.classList.remove('show'); }, 2800);
   }
 
   picker.addEventListener('change', function(){
@@ -463,6 +513,16 @@
   nextBtn.addEventListener('click', function(){
     var i = dates.indexOf(picker.value);
     if(i >= 0 && i < dates.length - 1){ picker.value = dates[i+1]; render(dates[i+1]); }
+  });
+  refreshBtn.addEventListener('click', function(){
+    if(!reduceMotion){
+      refreshBtn.classList.add('spinning');
+      setTimeout(function(){ refreshBtn.classList.remove('spinning'); }, 500);
+    }
+    picker.value = maxDate;
+    render(maxDate);
+    var asOf = ARCHIVE[maxDate].meta.split('·')[0].trim();
+    showToast('✅ 최신 데이터로 업데이트했습니다 · ' + asOf);
   });
 
   render(maxDate);
