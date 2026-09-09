@@ -15,11 +15,17 @@ Streamlit Community Cloud(share.streamlit.io) 배포용 진입점.
 """
 
 from datetime import datetime
+from pathlib import Path
 
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import streamlit as st
+
+# Streamlit Cloud는 앱 실행 시 작업 디렉터리가 이 스크립트의 위치와 다를 수 있으므로
+# (예: 저장소 루트) 상대경로 대신 이 파일 기준 절대경로로 리소스를 찾는다.
+APP_DIR = Path(__file__).resolve().parent
+EQUITY_CURVE_PATH = APP_DIR / "backtest_equity_curve.png"
 
 from config import (
     MARKET_INDEX, TOP_SECTOR_COUNT, INITIAL_CASH, RISK_PER_TRADE_PCT,
@@ -194,7 +200,10 @@ b1.metric("총 수익률 (최근 3년)", "+55.46%")
 b2.metric("연복리수익률(CAGR)", "+15.84%")
 b3.metric("최대낙폭(MDD)", "-19.27%")
 b4.metric("샤프 비율 / 승률", "1.11", "51.1% (92건)")
-st.image("backtest_equity_curve.png", caption="탑다운 전략 3년 백테스트 자산 곡선 (참고용, 로컬 실행 결과)")
+if EQUITY_CURVE_PATH.exists():
+    st.image(str(EQUITY_CURVE_PATH), caption="탑다운 전략 3년 백테스트 자산 곡선 (참고용, 로컬 실행 결과)")
+else:
+    st.info("자산곡선 이미지(backtest_equity_curve.png)를 찾을 수 없습니다.")
 
 with st.expander("▶ 지금 다시 백테스트 실행하기"):
     bt_years = st.slider("백테스트 기간(년)", min_value=1, max_value=5, value=BACKTEST_YEARS)
