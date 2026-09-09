@@ -4,3 +4,4 @@ numpy>=1.26
 schedule>=1.2
 backtrader>=1.9.78.123
 matplotlib>=3.7
+streamlit>=1.38

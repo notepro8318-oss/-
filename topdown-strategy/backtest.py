@@ -266,13 +266,21 @@ class TopDownStrategy(bt.Strategy):
 # ------------------------------------------------------------------
 # 백테스트 실행 / 리포트
 # ------------------------------------------------------------------
-def run_backtest(years: int = BACKTEST_YEARS, capital: float = INITIAL_CASH):
+def run_backtest(years: int = BACKTEST_YEARS, capital: float = INITIAL_CASH,
+                  printlog: bool = True, save_chart: bool = True):
+    """
+    백테스트를 실행하고 (strat, start_value, end_value)를 반환한다.
+
+    printlog=False, save_chart=False로 호출하면 콘솔/파일 I/O 없이 결과 객체만
+    돌려받을 수 있다 (예: streamlit_app.py에서 웹 UI에 직접 렌더링할 때 사용).
+    """
     cerebro = bt.Cerebro()
     cerebro.broker.setcash(capital)
     cerebro.broker.setcommission(commission=COMMISSION)
 
-    print(f"[데이터 로딩] 시장/섹터/종목 {1 + len(SECTOR_ETFS) + len(build_stock_sector_map())}개 티커, "
-          f"최근 {years}년(+워밍업 1년)")
+    if printlog:
+        print(f"[데이터 로딩] 시장/섹터/종목 {1 + len(SECTOR_ETFS) + len(build_stock_sector_map())}개 티커, "
+              f"최근 {years}년(+워밍업 1년)")
 
     # ---- 시장 데이터 ----
     market_feed = load_feed(MARKET_INDEX, years)
@@ -295,7 +303,7 @@ def run_backtest(years: int = BACKTEST_YEARS, capital: float = INITIAL_CASH):
             cerebro.adddata(feed, name=ticker)
             loaded_stocks[ticker] = stock_sector_map[ticker]
 
-    cerebro.addstrategy(TopDownStrategy, stock_sector_map=loaded_stocks, printlog=True)
+    cerebro.addstrategy(TopDownStrategy, stock_sector_map=loaded_stocks, printlog=printlog)
 
     # ---- 분석기 ----
     cerebro.addanalyzer(bt.analyzers.TimeReturn, _name="time_return", timeframe=bt.TimeFrame.Days)
@@ -305,23 +313,28 @@ def run_backtest(years: int = BACKTEST_YEARS, capital: float = INITIAL_CASH):
     cerebro.addanalyzer(bt.analyzers.TradeAnalyzer, _name="trades")
 
     start_value = cerebro.broker.getvalue()
-    print(f"\n[백테스트 시작] 초기 자본 = {start_value:,.0f}\n{'-'*70}")
+    if printlog:
+        print(f"\n[백테스트 시작] 초기 자본 = {start_value:,.0f}\n{'-'*70}")
 
     results = cerebro.run()
     strat = results[0]
 
     end_value = cerebro.broker.getvalue()
-    print(f"{'-'*70}\n[백테스트 종료] 최종 자산 = {end_value:,.0f}\n")
 
-    print_report(strat, start_value, end_value, years)
-    save_equity_curve(strat, filename="backtest_equity_curve.png")
+    if printlog:
+        print(f"{'-'*70}\n[백테스트 종료] 최종 자산 = {end_value:,.0f}\n")
+        print_report(strat, start_value, end_value, years)
+    if save_chart:
+        save_equity_curve(strat, filename="backtest_equity_curve.png")
+
+    return strat, start_value, end_value
 
 
-def print_report(strat, start_value: float, end_value: float, years: int):
+def get_backtest_stats(strat, start_value: float, end_value: float, years: int) -> dict:
+    """분석기 결과를 UI/콘솔 어디서나 쓸 수 있는 dict 형태로 정리한다."""
     dd = strat.analyzers.drawdown.get_analysis()
     sharpe = strat.analyzers.sharpe.get_analysis()
     trades = strat.analyzers.trades.get_analysis()
-    returns = strat.analyzers.returns.get_analysis()
 
     total_return_pct = (end_value / start_value - 1.0) * 100.0
     cagr_pct = ((end_value / start_value) ** (1.0 / years) - 1.0) * 100.0 if years > 0 else float("nan")
@@ -330,35 +343,58 @@ def print_report(strat, start_value: float, end_value: float, years: int):
     won = trades.get("won", {}).get("total", 0)
     lost = trades.get("lost", {}).get("total", 0)
     win_rate = (won / total_trades * 100.0) if total_trades else 0.0
-    avg_win = trades.get("won", {}).get("pnl", {}).get("average", 0.0)
-    avg_loss = trades.get("lost", {}).get("pnl", {}).get("average", 0.0)
 
-    print("=" * 70)
-    print(" 탑다운(Top-Down) 4단계 전략 - 3년 백테스트 리포트 (Backtrader)")
-    print("=" * 70)
-    print(f" 초기 자본        : {start_value:,.0f}")
-    print(f" 최종 자산        : {end_value:,.0f}")
-    print(f" 총 수익률        : {total_return_pct:.2f}%")
-    print(f" 연복리수익률(CAGR): {cagr_pct:.2f}%")
-    print(f" 최대 낙폭(MDD)    : {dd.get('max', {}).get('drawdown', float('nan')):.2f}%")
-    print(f" 샤프 비율         : {sharpe.get('sharperatio', float('nan'))}")
-    print(f" 총 거래 횟수      : {total_trades} (승 {won} / 패 {lost}, 승률 {win_rate:.1f}%)")
-    print(f" 평균 수익 트레이드: {avg_win:,.2f}")
-    print(f" 평균 손실 트레이드: {avg_loss:,.2f}")
-    print("=" * 70)
+    return {
+        "start_value": start_value,
+        "end_value": end_value,
+        "total_return_pct": total_return_pct,
+        "cagr_pct": cagr_pct,
+        "mdd_pct": dd.get("max", {}).get("drawdown", float("nan")),
+        "sharpe": sharpe.get("sharperatio", None),
+        "total_trades": total_trades,
+        "won": won,
+        "lost": lost,
+        "win_rate": win_rate,
+        "avg_win": trades.get("won", {}).get("pnl", {}).get("average", 0.0),
+        "avg_loss": trades.get("lost", {}).get("pnl", {}).get("average", 0.0),
+    }
 
 
-def save_equity_curve(strat, filename: str = "backtest_equity_curve.png"):
-    """TimeReturn 분석기의 일별 수익률을 누적하여 자산 곡선을 이미지로 저장한다."""
+def get_equity_series(strat):
+    """TimeReturn 분석기의 일별 수익률을 누적 자산곡선(dates, equity)으로 변환한다."""
     tr = strat.analyzers.time_return.get_analysis()
     if not tr:
-        return
+        return [], []
 
     dates = sorted(tr.keys())
     equity = [1.0]
     for dt in dates:
         equity.append(equity[-1] * (1.0 + tr[dt]))
-    equity = equity[1:]
+    return dates, equity[1:]
+
+
+def print_report(strat, start_value: float, end_value: float, years: int):
+    stats = get_backtest_stats(strat, start_value, end_value, years)
+    print("=" * 70)
+    print(" 탑다운(Top-Down) 4단계 전략 - 3년 백테스트 리포트 (Backtrader)")
+    print("=" * 70)
+    print(f" 초기 자본        : {stats['start_value']:,.0f}")
+    print(f" 최종 자산        : {stats['end_value']:,.0f}")
+    print(f" 총 수익률        : {stats['total_return_pct']:.2f}%")
+    print(f" 연복리수익률(CAGR): {stats['cagr_pct']:.2f}%")
+    print(f" 최대 낙폭(MDD)    : {stats['mdd_pct']:.2f}%")
+    print(f" 샤프 비율         : {stats['sharpe']}")
+    print(f" 총 거래 횟수      : {stats['total_trades']} (승 {stats['won']} / 패 {stats['lost']}, 승률 {stats['win_rate']:.1f}%)")
+    print(f" 평균 수익 트레이드: {stats['avg_win']:,.2f}")
+    print(f" 평균 손실 트레이드: {stats['avg_loss']:,.2f}")
+    print("=" * 70)
+
+
+def save_equity_curve(strat, filename: str = "backtest_equity_curve.png"):
+    """TimeReturn 분석기의 일별 수익률을 누적하여 자산 곡선을 이미지로 저장한다."""
+    dates, equity = get_equity_series(strat)
+    if not dates:
+        return
 
     plt.figure(figsize=(11, 5))
     plt.plot(dates, equity, linewidth=1.5)
