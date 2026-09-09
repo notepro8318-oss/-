@@ -1,0 +1,167 @@
+{
+  "generated_at": "2026-09-09T17:48:36",
+  "market": {
+    "ticker": "SPY",
+    "is_bull": false,
+    "close": 765.9600219726562,
+    "ma20": 768.6994934082031,
+    "ma20_prev": 769.6849945068359
+  },
+  "sector_ranking": [
+    {
+      "ticker": "XLE",
+      "ret_1w": 1.27,
+      "ret_1m": 7.63,
+      "rank_1w": 2,
+      "rank_1m": 1
+    },
+    {
+      "ticker": "SOXX",
+      "ret_1w": 3.4,
+      "ret_1m": -0.19,
+      "rank_1w": 1,
+      "rank_1m": 2
+    },
+    {
+      "ticker": "QQQ",
+      "ret_1w": 0.22,
+      "ret_1m": -0.35,
+      "rank_1w": 3,
+      "rank_1m": 3
+    },
+    {
+      "ticker": "XLV",
+      "ret_1w": -2.0,
+      "ret_1m": -0.78,
+      "rank_1w": 6,
+      "rank_1m": 4
+    },
+    {
+      "ticker": "XLF",
+      "ret_1w": -0.71,
+      "ret_1m": -0.88,
+      "rank_1w": 5,
+      "rank_1m": 5
+    },
+    {
+      "ticker": "IGV",
+      "ret_1w": -6.66,
+      "ret_1m": -2.24,
+      "rank_1w": 8,
+      "rank_1m": 6
+    },
+    {
+      "ticker": "XLY",
+      "ret_1w": -2.23,
+      "ret_1m": -4.75,
+      "rank_1w": 7,
+      "rank_1m": 7
+    },
+    {
+      "ticker": "XLI",
+      "ret_1w": -0.41,
+      "ret_1m": -5.51,
+      "rank_1w": 4,
+      "rank_1m": 8
+    }
+  ],
+  "leading_sectors": [
+    "XLE",
+    "SOXX"
+  ],
+  "top_sector_count": 2,
+  "stock_candidates": [
+    {
+      "ticker": "CVX",
+      "sector": "XLE",
+      "close": 209.8,
+      "ma20": 203.47,
+      "ma50": 190.77,
+      "ma200": 178.53,
+      "high_52w": 211.78,
+      "stock_ret_1m": 8.58,
+      "sector_ret_1m": 7.63
+    },
+    {
+      "ticker": "COP",
+      "sector": "XLE",
+      "close": 135.04,
+      "ma20": 131.27,
+      "ma50": 120.23,
+      "ma200": 111.6,
+      "high_52w": 137.2,
+      "stock_ret_1m": 10.49,
+      "sector_ret_1m": 7.63
+    },
+    {
+      "ticker": "SLB",
+      "sector": "XLE",
+      "close": 57.1,
+      "ma20": 54.81,
+      "ma50": 50.75,
+      "ma200": 48.67,
+      "high_52w": 59.79,
+      "stock_ret_1m": 7.89,
+      "sector_ret_1m": 7.63
+    },
+    {
+      "ticker": "MPC",
+      "sector": "XLE",
+      "close": 397.77,
+      "ma20": 366.22,
+      "ma50": 324.25,
+      "ma200": 241.31,
+      "high_52w": 397.77,
+      "stock_ret_1m": 24.52,
+      "sector_ret_1m": 7.63
+    },
+    {
+      "ticker": "PSX",
+      "sector": "XLE",
+      "close": 259.14,
+      "ma20": 242.39,
+      "ma50": 215.3,
+      "ma200": 171.14,
+      "high_52w": 259.14,
+      "stock_ret_1m": 20.88,
+      "sector_ret_1m": 7.63
+    },
+    {
+      "ticker": "VLO",
+      "sector": "XLE",
+      "close": 382.85,
+      "ma20": 350.86,
+      "ma50": 316.96,
+      "ma200": 239.01,
+      "high_52w": 382.85,
+      "stock_ret_1m": 21.56,
+      "sector_ret_1m": 7.63
+    },
+    {
+      "ticker": "NVDA",
+      "sector": "SOXX",
+      "close": 225.73,
+      "ma20": 220.49,
+      "ma50": 211.23,
+      "ma200": 196.75,
+      "high_52w": 235.47,
+      "stock_ret_1m": 3.76,
+      "sector_ret_1m": -0.19
+    }
+  ],
+  "entry_signals": [
+    {
+      "ticker": "VLO",
+      "sector": "XLE",
+      "type": "BREAKOUT",
+      "entry_price": 382.85,
+      "stop_loss": 363.71,
+      "take_profit": 421.14,
+      "shares": 104,
+      "risk_amount": 2000.0,
+      "position_value": 39816.4
+    }
+  ],
+  "assumed_capital": 100000,
+  "risk_per_trade_pct": 0.02
+}

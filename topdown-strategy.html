@@ -1,0 +1,475 @@
+<title>Top-Down Strategy Desk · 탑다운 4단계 전략</title>
+<style>
+  :root{
+    --bg: #f7f5f0;
+    --surface: #ffffff;
+    --surface-2: #f0ede4;
+    --line: #e3ded0;
+    --text: #1c1a15;
+    --text-dim: #6b6558;
+    --text-faint: #9a937f;
+    --accent: #b5790f;
+    --accent-soft: #f3e3c2;
+    --accent-ink: #6f4b0a;
+    --up: #147a4f;
+    --up-soft: #dcf1e6;
+    --down: #b3273e;
+    --down-soft: #fbe2e5;
+    --shadow: 0 1px 2px rgba(28,26,21,.04), 0 8px 24px -12px rgba(28,26,21,.10);
+    --sans: 'Pretendard', 'Apple SD Gothic Neo', 'Malgun Gothic', -apple-system, BlinkMacSystemFont, sans-serif;
+    --mono: 'SF Mono', 'Cascadia Mono', Consolas, 'D2Coding', monospace;
+    color-scheme: light;
+  }
+  :root[data-theme="dark"]{
+    --bg: #14161c;
+    --surface: #1b1e26;
+    --surface-2: #21242e;
+    --line: #2d3140;
+    --text: #eceae2;
+    --text-dim: #a2a6b5;
+    --text-faint: #676c7d;
+    --accent: #e3b34f;
+    --accent-soft: #3a3120;
+    --accent-ink: #f2cd7e;
+    --up: #4fd8a0;
+    --up-soft: #133029;
+    --down: #f2748a;
+    --down-soft: #331920;
+    --shadow: 0 1px 2px rgba(0,0,0,.2), 0 12px 28px -14px rgba(0,0,0,.5);
+    color-scheme: dark;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --bg: #14161c; --surface: #1b1e26; --surface-2: #21242e; --line: #2d3140;
+      --text: #eceae2; --text-dim: #a2a6b5; --text-faint: #676c7d;
+      --accent: #e3b34f; --accent-soft: #3a3120; --accent-ink: #f2cd7e;
+      --up: #4fd8a0; --up-soft: #133029; --down: #f2748a; --down-soft: #331920;
+      --shadow: 0 1px 2px rgba(0,0,0,.2), 0 12px 28px -14px rgba(0,0,0,.5);
+      color-scheme: dark;
+    }
+  }
+  *{ box-sizing:border-box; }
+  html,body{ margin:0; padding:0; }
+  body{
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    line-height: 1.68;
+    -webkit-font-smoothing: antialiased;
+    transition: background .2s ease, color .2s ease;
+  }
+  a{ color: inherit; }
+  .page{ max-width: 960px; margin: 0 auto; padding: 0 22px 90px; }
+
+  .toolbar{
+    position: sticky; top: 0; z-index: 20;
+    background: color-mix(in srgb, var(--bg) 88%, transparent);
+    backdrop-filter: blur(10px) saturate(1.1);
+    border-bottom: 1px solid var(--line);
+    margin: 0 -22px 28px;
+    padding: 14px 22px;
+    display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+  }
+  .brand{ display:flex; align-items:baseline; gap: 8px; text-decoration:none; }
+  .brand-mark{ font-weight: 800; font-size: 16.5px; letter-spacing: -0.01em; }
+  .brand-mark b{ color: var(--accent); }
+  .brand-sub{ font-family: var(--mono); font-size: 11px; color: var(--text-faint); }
+  .toolbar-controls{ display:flex; align-items:center; gap: 8px; }
+  .home-link{
+    font-size: 12.5px; color: var(--text-dim); text-decoration:none;
+    border: 1px solid var(--line); background: var(--surface); border-radius: 10px;
+    padding: 7px 12px; box-shadow: var(--shadow);
+  }
+  .home-link:hover{ color: var(--accent); border-color: var(--accent); }
+  .icon-btn{
+    width: 38px; height: 38px; border-radius: 10px; border: 1px solid var(--line);
+    background: var(--surface); color: var(--text); cursor: pointer; font-size: 16px;
+    display:grid; place-items:center; box-shadow: var(--shadow);
+  }
+  .icon-btn:hover{ border-color: var(--accent); }
+  .icon-btn:focus-visible{ outline: 2px solid var(--accent); outline-offset: 2px; }
+  .icon-btn.spinning{ animation: spin .5s ease; }
+  @keyframes spin{ from{ transform: rotate(0deg); } to{ transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce){ .icon-btn.spinning{ animation: none; } }
+
+  h1.headline{
+    font-size: clamp(22px, 3.4vw, 28px); font-weight: 800; letter-spacing: -0.015em;
+    margin: 0 0 4px; text-wrap: balance;
+  }
+  .headline-meta{ font-family: var(--mono); font-size: 12.5px; color: var(--text-dim); margin-bottom: 30px; }
+  .headline-meta .live{ color: var(--up); }
+  .headline-meta .halt{ color: var(--down); }
+
+  section{ margin-bottom: 40px; }
+  .sec-head{ display:flex; align-items:baseline; gap:10px; margin-bottom: 14px; flex-wrap: wrap; }
+  h2.sec-title{ font-weight: 800; font-size: 18px; margin: 0; letter-spacing: -0.01em; }
+  .step-num{
+    display:inline-grid; place-items:center; width: 22px; height: 22px; border-radius: 50%;
+    background: var(--accent); color: var(--bg); font-size: 12px; font-weight: 800; font-family: var(--mono);
+  }
+  .badge{
+    font-family: var(--mono); font-size: 10.5px; color: var(--text-faint);
+    border: 1px solid var(--line); padding: 2px 8px; border-radius: 999px;
+  }
+
+  .status-card{
+    background: var(--surface); border: 1px solid var(--line); border-radius: 14px;
+    padding: 18px 20px; box-shadow: var(--shadow); display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap;
+  }
+  .status-card.bull{ border-left: 4px solid var(--up); }
+  .status-card.bear{ border-left: 4px solid var(--down); }
+  .status-left{ display:flex; flex-direction:column; gap:4px; }
+  .status-pill{
+    font-family: var(--mono); font-weight: 800; font-size: 13px; padding: 5px 12px; border-radius: 999px;
+  }
+  .status-pill.bull{ color: var(--up); background: var(--up-soft); }
+  .status-pill.bear{ color: var(--down); background: var(--down-soft); }
+  .status-metrics{ display:flex; gap: 22px; flex-wrap: wrap; }
+  .status-metrics div{ font-size: 12.5px; color: var(--text-dim); }
+  .status-metrics b{ display:block; font-family: var(--mono); font-size: 15px; color: var(--text); margin-top: 2px; }
+
+  table{ width: 100%; border-collapse: collapse; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; box-shadow: var(--shadow); font-size: 13px; }
+  th, td{ padding: 10px 12px; text-align: right; border-bottom: 1px solid var(--line); font-variant-numeric: tabular-nums; }
+  th:first-child, td:first-child{ text-align: left; }
+  th{ background: var(--surface-2); color: var(--text-dim); font-weight: 700; font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.03em; }
+  tbody tr:last-child td{ border-bottom: none; }
+  tbody tr.leader{ background: var(--accent-soft); }
+  tbody tr.leader td:first-child{ font-weight: 800; color: var(--accent-ink); }
+  td.pos{ color: var(--up); font-weight: 700; }
+  td.neg{ color: var(--down); font-weight: 700; }
+  .table-wrap{ overflow-x: auto; }
+
+  .leader-tags{ display:flex; gap:8px; margin: 10px 0 16px; flex-wrap:wrap; }
+  .leader-tag{
+    font-family: var(--mono); font-weight: 800; font-size: 12.5px; padding: 5px 12px; border-radius: 999px;
+    background: var(--accent-soft); color: var(--accent-ink); border: 1px solid var(--accent);
+  }
+
+  .card-grid{ display:grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; }
+  .stock-card{
+    background: var(--surface); border: 1px solid var(--line); border-radius: 12px;
+    padding: 14px 16px; box-shadow: var(--shadow);
+  }
+  .stock-card-head{ display:flex; align-items:baseline; justify-content:space-between; margin-bottom:8px; }
+  .stock-ticker{ font-weight: 800; font-size: 15px; }
+  .stock-sector{ font-family: var(--mono); font-size: 10.5px; color: var(--text-faint); border: 1px solid var(--line); padding: 1px 7px; border-radius: 999px; }
+  .stock-price{ font-family: var(--mono); font-size: 17px; margin-bottom: 8px; }
+  .stock-ma{ font-size: 11.5px; color: var(--text-faint); font-family: var(--mono); margin-bottom: 6px; }
+  .stock-rs{ font-size: 12px; }
+  .stock-rs b{ color: var(--up); }
+
+  .signal-card{
+    background: var(--surface); border: 1px solid var(--line); border-left: 4px solid var(--accent);
+    border-radius: 12px; padding: 18px 20px; box-shadow: var(--shadow); margin-bottom: 12px;
+  }
+  .signal-head{ display:flex; align-items:center; gap:10px; margin-bottom:12px; flex-wrap:wrap; }
+  .signal-ticker{ font-weight: 800; font-size: 18px; }
+  .signal-type{
+    font-family: var(--mono); font-size: 11px; font-weight: 800; padding: 3px 9px; border-radius: 999px;
+    background: var(--accent-soft); color: var(--accent-ink); letter-spacing: 0.03em;
+  }
+  .signal-grid{ display:grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 12px; }
+  .signal-grid div{ font-size: 11.5px; color: var(--text-faint); }
+  .signal-grid b{ display:block; font-family: var(--mono); font-size: 15px; color: var(--text); margin-top: 3px; }
+  .signal-grid b.up{ color: var(--up); }
+  .signal-grid b.down{ color: var(--down); }
+  .no-signal{
+    background: var(--surface-2); border: 1px dashed var(--line); border-radius: 12px;
+    padding: 16px 18px; font-size: 13.3px; color: var(--text-dim);
+  }
+
+  .stat-grid{ display:grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin-bottom: 18px; }
+  .stat-tile{ background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 14px 15px; box-shadow: var(--shadow); }
+  .stat-label{ font-size: 11.5px; color: var(--text-faint); margin-bottom: 6px; }
+  .stat-value{ font-family: var(--mono); font-size: 19px; font-weight: 700; }
+  .stat-value.up{ color: var(--up); }
+  .stat-value.down{ color: var(--down); }
+
+  .chart-frame{
+    background: #ffffff; border: 1px solid var(--line); border-radius: 12px; padding: 10px;
+    box-shadow: var(--shadow); margin-bottom: 10px;
+  }
+  .chart-frame img{ display:block; width: 100%; height: auto; border-radius: 6px; }
+
+  .flow-note{
+    border-left: 3px solid var(--accent); background: var(--accent-soft);
+    color: var(--accent-ink); padding: 13px 16px; border-radius: 0 10px 10px 0;
+    font-size: 13.6px; margin: 4px 0;
+  }
+  .flow-note b{ color: inherit; }
+
+  .disclaimer{
+    background: var(--surface-2); border: 1px solid var(--line); border-radius: 12px;
+    padding: 16px 18px; font-size: 12.5px; color: var(--text-dim);
+  }
+
+  footer{ margin-top: 46px; padding-top: 18px; border-top: 1px solid var(--line); font-size: 11.5px; color: var(--text-faint); font-family: var(--mono); line-height: 1.9; }
+  footer a{ color: var(--accent-ink); text-decoration: none; }
+  footer a:hover{ text-decoration: underline; }
+
+  .toast{
+    position: fixed; left: 50%; bottom: 26px; transform: translateX(-50%) translateY(16px);
+    background: var(--text); color: var(--bg); padding: 10px 18px; border-radius: 999px;
+    font-size: 13px; font-weight: 700; box-shadow: var(--shadow); opacity: 0; pointer-events: none;
+    transition: opacity .25s ease, transform .25s ease; z-index: 50; white-space: nowrap;
+  }
+  .toast.show{ opacity: 1; transform: translateX(-50%) translateY(0); }
+
+  @media (max-width: 560px){
+    .toolbar{ flex-direction: column; align-items: stretch; }
+    .toolbar-controls{ justify-content: space-between; }
+    .status-card{ flex-direction: column; align-items: flex-start; }
+    .toast{ font-size: 12px; white-space: normal; text-align: center; width: 88%; }
+  }
+</style>
+
+<div class="page">
+
+  <div class="toolbar">
+    <a class="brand" href="index.html">
+      <span class="brand-mark"><b>Top-Down</b> Strategy Desk</span>
+      <span class="brand-sub">4-STAGE QUANT SIGNAL SCANNER</span>
+    </a>
+    <div class="toolbar-controls">
+      <a class="home-link" href="index.html">← 홈으로</a>
+      <button class="icon-btn" id="refreshBtn" type="button" aria-label="스냅샷 갱신" title="스냅샷 갱신">🔄</button>
+      <button class="icon-btn" id="themeToggle" type="button" aria-label="테마 전환" title="라이트/다크 모드 전환">🌙</button>
+    </div>
+  </div>
+
+  <h1 class="headline">탑다운(Top-Down) 4단계 전략 시그널</h1>
+  <div class="headline-meta" id="metaLine"></div>
+
+  <section>
+    <div class="sec-head"><span class="step-num">1</span><h2 class="sec-title">시장 추세 확인</h2><span class="badge">SPY · MA20</span></div>
+    <div class="status-card" id="marketCard"></div>
+  </section>
+
+  <section>
+    <div class="sec-head"><span class="step-num">2</span><h2 class="sec-title">주도 섹터 모멘텀</h2><span class="badge">1주 · 1개월 수익률</span></div>
+    <p style="font-size:13px;color:var(--text-dim);margin:0 0 4px;">1주일(5거래일) · 1개월(20거래일) 수익률이 모두 상위 2위 이내인 섹터를 주도 섹터로 선정합니다.</p>
+    <div class="leader-tags" id="leaderTags"></div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>ETF</th><th>1주 수익률</th><th>1개월 수익률</th><th>1주 순위</th><th>1개월 순위</th></tr></thead>
+        <tbody id="sectorTable"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head"><span class="step-num">3</span><h2 class="sec-title">강세 종목 발굴</h2><span class="badge">정배열 · 52주 신고가 근접 · 상대강도</span></div>
+    <p style="font-size:13px;color:var(--text-dim);margin:0 0 12px;">주도 섹터 대표종목 중 <b>현재가 &gt; MA20 &gt; MA50 &gt; MA200</b> 정배열, <b>52주 신고가 -10% 이내</b>, <b>1개월 수익률이 소속 섹터를 상회</b>하는 3가지 조건을 모두 만족한 종목입니다.</p>
+    <div class="card-grid" id="stockGrid"></div>
+  </section>
+
+  <section>
+    <div class="sec-head"><span class="step-num">4</span><h2 class="sec-title">매수 타점 &amp; 리스크 관리</h2><span class="badge">눌림목 · 박스권 돌파</span></div>
+    <div id="signalList"></div>
+    <div class="flow-note" style="margin-top:14px;">
+      <b>참고 —</b> 위 3~4단계는 <b>주도 섹터·종목 필터가 항상 최신 데이터로 참고용 계산</b>된 결과입니다. 실제 신규 매수는 1단계 시장 필터가 <b>Bull</b>일 때만 집행하는 것이 전략 원칙이며, 현재 시장 상태는 위 1단계 카드를 따릅니다.
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head"><span class="step-num">📊</span><h2 class="sec-title">3년 백테스트 리포트</h2><span class="badge">Backtrader · 전체 유니버스(~70종목)</span></div>
+    <div class="stat-grid" id="backtestStats"></div>
+    <div class="chart-frame">
+      <img src="topdown-strategy/backtest_equity_curve.png" alt="탑다운 전략 3년 백테스트 자산 곡선" loading="lazy" />
+    </div>
+    <div class="disclaimer">
+      백테스트는 2023~2026년 일봉 데이터를 기반으로 하며, 편도 수수료 0.05%를 반영했습니다. 과거 성과이며 향후 수익을 보장하지 않습니다. 전략 소스코드와 백테스트 재현 방법은 하단 GitHub 링크를 참고하세요.
+    </div>
+  </section>
+
+  <footer>
+    STRATEGY LOGIC · 1) 시장필터(SPY MA20 우상향+종가&gt;MA20) → 2) 섹터모멘텀(1주/1개월 수익률 상위 2위 교집합) →<br/>
+    3) 종목필터(정배열/52주 신고가 근접/상대강도) → 4) 진입(눌림목·돌파) + 리스크관리(손절 -5%/MA20이탈, 익절 +10%, 1회 리스크 계좌 2%)<br/><br/>
+    SOURCE CODE · <a href="topdown-strategy/" target="_blank" rel="noopener">./topdown-strategy/</a> (config.py · market.py · sector.py · stock.py · entry.py · main.py · backtest.py)<br/>
+    데이터 출처 · yfinance (지연 시세) · 본 페이지는 투자 자문이 아니며 참고용입니다.
+  </footer>
+
+</div>
+
+<script>
+(function(){
+  // ---- 스냅샷 데이터 (export_snapshot.py 실행 결과를 정적으로 임베드) ----
+  var SNAPSHOT = {
+    "generated_at": "2026-09-09T17:48:36",
+    "market": { "ticker": "SPY", "is_bull": false, "close": 765.96, "ma20": 768.70, "ma20_prev": 769.68 },
+    "sector_ranking": [
+      { "ticker": "XLE",  "ret_1w": 3.06,  "ret_1m": 7.63,  "rank_1w": 2, "rank_1m": 1 },
+      { "ticker": "SOXX", "ret_1w": 3.40,  "ret_1m": -0.19, "rank_1w": 1, "rank_1m": 2 },
+      { "ticker": "QQQ",  "ret_1w": 0.22,  "ret_1m": -0.35, "rank_1w": 3, "rank_1m": 3 },
+      { "ticker": "XLV",  "ret_1w": -2.00, "ret_1m": -0.78, "rank_1w": 6, "rank_1m": 4 },
+      { "ticker": "XLF",  "ret_1w": -0.71, "ret_1m": -0.88, "rank_1w": 5, "rank_1m": 5 },
+      { "ticker": "IGV",  "ret_1w": -6.66, "ret_1m": -2.24, "rank_1w": 8, "rank_1m": 6 },
+      { "ticker": "XLY",  "ret_1w": -2.23, "ret_1m": -4.75, "rank_1w": 7, "rank_1m": 7 },
+      { "ticker": "XLI",  "ret_1w": -0.41, "ret_1m": -5.51, "rank_1w": 4, "rank_1m": 8 }
+    ],
+    "leading_sectors": ["XLE", "SOXX"],
+    "top_sector_count": 2,
+    "stock_candidates": [
+      { "ticker": "CVX", "sector": "XLE",  "close": 209.80, "ma20": 203.47, "ma50": 190.77, "ma200": 178.53, "high_52w": 211.78, "stock_ret_1m": 8.58,  "sector_ret_1m": 7.63 },
+      { "ticker": "COP", "sector": "XLE",  "close": 135.04, "ma20": 131.27, "ma50": 120.23, "ma200": 111.60, "high_52w": 137.20, "stock_ret_1m": 10.49, "sector_ret_1m": 7.63 },
+      { "ticker": "SLB", "sector": "XLE",  "close": 57.10,  "ma20": 54.81,  "ma50": 50.75,  "ma200": 48.67,  "high_52w": 59.79,  "stock_ret_1m": 7.89,  "sector_ret_1m": 7.63 },
+      { "ticker": "MPC", "sector": "XLE",  "close": 397.77, "ma20": 366.22, "ma50": 324.25, "ma200": 241.31, "high_52w": 397.77, "stock_ret_1m": 24.52, "sector_ret_1m": 7.63 },
+      { "ticker": "PSX", "sector": "XLE",  "close": 259.14, "ma20": 242.39, "ma50": 215.30, "ma200": 171.14, "high_52w": 259.14, "stock_ret_1m": 20.88, "sector_ret_1m": 7.63 },
+      { "ticker": "VLO", "sector": "XLE",  "close": 382.85, "ma20": 350.86, "ma50": 316.96, "ma200": 239.01, "high_52w": 382.85, "stock_ret_1m": 21.56, "sector_ret_1m": 7.63 },
+      { "ticker": "NVDA","sector": "SOXX", "close": 225.73, "ma20": 220.49, "ma50": 211.23, "ma200": 196.75, "high_52w": 235.47, "stock_ret_1m": 3.76,  "sector_ret_1m": -0.19 }
+    ],
+    "entry_signals": [
+      { "ticker": "VLO", "sector": "XLE", "type": "BREAKOUT", "entry_price": 382.85, "stop_loss": 363.71, "take_profit": 421.14, "shares": 104, "risk_amount": 2000.0, "position_value": 39816.40 }
+    ],
+    "assumed_capital": 100000,
+    "risk_per_trade_pct": 0.02,
+    "backtest": {
+      "period": "2023-09 ~ 2026-09 (3년)",
+      "total_return_pct": 55.46,
+      "cagr_pct": 15.84,
+      "mdd_pct": 19.27,
+      "sharpe": 1.11,
+      "total_trades": 92,
+      "won": 47,
+      "lost": 43,
+      "win_rate_pct": 51.1
+    }
+  };
+
+  function fmt(n, d){ d = (d===undefined)?2:d; return Number(n).toLocaleString('en-US', {minimumFractionDigits:d, maximumFractionDigits:d}); }
+  function pctClass(v){ return v > 0 ? 'pos' : (v < 0 ? 'neg' : ''); }
+  function pctText(v){ return (v>0?'+':'') + fmt(v,2) + '%'; }
+
+  function renderMeta(){
+    var d = new Date(SNAPSHOT.generated_at);
+    document.getElementById('metaLine').innerHTML =
+      '<span class="' + (SNAPSHOT.market.is_bull ? 'live' : 'halt') + '">●</span> 스냅샷 기준 ' +
+      d.toLocaleString('ko-KR', {year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit'}) +
+      ' · yfinance 지연 시세';
+  }
+
+  function renderMarket(){
+    var m = SNAPSHOT.market;
+    var cls = m.is_bull ? 'bull' : 'bear';
+    document.getElementById('marketCard').className = 'status-card ' + cls;
+    document.getElementById('marketCard').innerHTML =
+      '<div class="status-left">' +
+        '<span class="status-pill ' + cls + '">' + (m.is_bull ? '● BULL · 매매 가능' : '● BEAR/중립 · 신규 매수 중단') + '</span>' +
+        '<span style="font-size:12px;color:var(--text-faint);">' + m.ticker + ' 종가가 MA20 ' + (m.close > m.ma20 ? '위' : '아래') + ', MA20이 5거래일 전 대비 ' + (m.ma20 > m.ma20_prev ? '우상향' : '하락') + '</span>' +
+      '</div>' +
+      '<div class="status-metrics">' +
+        '<div>종가<b>' + fmt(m.close) + '</b></div>' +
+        '<div>MA20(현재)<b>' + fmt(m.ma20) + '</b></div>' +
+        '<div>MA20(5일전)<b>' + fmt(m.ma20_prev) + '</b></div>' +
+      '</div>';
+  }
+
+  function renderSectors(){
+    document.getElementById('leaderTags').innerHTML = SNAPSHOT.leading_sectors.map(function(t){
+      return '<span class="leader-tag">🏆 ' + t + '</span>';
+    }).join('') || '<span style="font-size:13px;color:var(--text-faint);">조건을 만족하는 주도 섹터가 없습니다.</span>';
+
+    document.getElementById('sectorTable').innerHTML = SNAPSHOT.sector_ranking.map(function(r){
+      var isLeader = SNAPSHOT.leading_sectors.indexOf(r.ticker) >= 0;
+      return '<tr class="' + (isLeader ? 'leader' : '') + '">' +
+        '<td>' + r.ticker + '</td>' +
+        '<td class="' + pctClass(r.ret_1w) + '">' + pctText(r.ret_1w) + '</td>' +
+        '<td class="' + pctClass(r.ret_1m) + '">' + pctText(r.ret_1m) + '</td>' +
+        '<td>' + r.rank_1w + '</td>' +
+        '<td>' + r.rank_1m + '</td>' +
+        '</tr>';
+    }).join('');
+  }
+
+  function renderStocks(){
+    document.getElementById('stockGrid').innerHTML = SNAPSHOT.stock_candidates.map(function(c){
+      var outperform = c.stock_ret_1m - c.sector_ret_1m;
+      return '<div class="stock-card">' +
+        '<div class="stock-card-head"><span class="stock-ticker">' + c.ticker + '</span><span class="stock-sector">' + c.sector + '</span></div>' +
+        '<div class="stock-price">$' + fmt(c.close) + '</div>' +
+        '<div class="stock-ma">MA20 ' + fmt(c.ma20) + ' · MA50 ' + fmt(c.ma50) + ' · MA200 ' + fmt(c.ma200) + '</div>' +
+        '<div class="stock-ma">52주 고점 ' + fmt(c.high_52w) + ' (' + fmt((c.close/c.high_52w - 1)*100,1) + '%)</div>' +
+        '<div class="stock-rs">1개월 수익률 <b>' + pctText(c.stock_ret_1m) + '</b> vs 섹터 ' + pctText(c.sector_ret_1m) +
+          ' <span style="color:var(--up);">(RS +' + fmt(outperform,1) + '%p)</span></div>' +
+        '</div>';
+    }).join('');
+  }
+
+  function renderSignals(){
+    var el = document.getElementById('signalList');
+    if(!SNAPSHOT.entry_signals.length){
+      el.innerHTML = '<div class="no-signal">오늘은 눌림목/돌파 조건을 만족하는 매수 시그널이 없습니다.</div>';
+      return;
+    }
+    el.innerHTML = SNAPSHOT.entry_signals.map(function(s){
+      var riskPct = (s.risk_amount / SNAPSHOT.assumed_capital * 100).toFixed(1);
+      return '<div class="signal-card">' +
+        '<div class="signal-head"><span class="signal-ticker">✅ ' + s.ticker + '</span><span class="signal-type">' + s.type + '</span><span class="badge">' + s.sector + '</span></div>' +
+        '<div class="signal-grid">' +
+          '<div>진입가<b>' + fmt(s.entry_price) + '</b></div>' +
+          '<div>손절가<b class="down">' + fmt(s.stop_loss) + '</b></div>' +
+          '<div>익절가<b class="up">' + fmt(s.take_profit) + '</b></div>' +
+          '<div>수량<b>' + s.shares.toLocaleString() + '주</b></div>' +
+          '<div>투입금액<b>$' + fmt(s.position_value,0) + '</b></div>' +
+          '<div>계좌 리스크<b>' + riskPct + '%</b></div>' +
+        '</div></div>';
+    }).join('');
+  }
+
+  function renderBacktest(){
+    var b = SNAPSHOT.backtest;
+    var tiles = [
+      { label: '총 수익률 (' + b.period + ')', value: pctText(b.total_return_pct), cls: pctClass(b.total_return_pct) },
+      { label: '연복리수익률(CAGR)', value: pctText(b.cagr_pct), cls: pctClass(b.cagr_pct) },
+      { label: '최대낙폭(MDD)', value: '-' + fmt(b.mdd_pct,2) + '%', cls: 'down' },
+      { label: '샤프 비율', value: fmt(b.sharpe,2), cls: '' },
+      { label: '총 거래 횟수', value: b.total_trades + '건', cls: '' },
+      { label: '승률', value: fmt(b.win_rate_pct,1) + '% (' + b.won + '승 ' + b.lost + '패)', cls: '' }
+    ];
+    document.getElementById('backtestStats').innerHTML = tiles.map(function(t){
+      return '<div class="stat-tile"><div class="stat-label">' + t.label + '</div><div class="stat-value ' + t.cls + '">' + t.value + '</div></div>';
+    }).join('');
+  }
+
+  function renderAll(){
+    renderMeta(); renderMarket(); renderSectors(); renderStocks(); renderSignals(); renderBacktest();
+  }
+  renderAll();
+
+  // ---- 새로고침 버튼(스냅샷 재렌더 + 안내 토스트) ----
+  var reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var refreshBtn = document.getElementById('refreshBtn');
+  var toastEl = null, toastTimer = null;
+  function showToast(msg){
+    if(!toastEl){ toastEl = document.createElement('div'); toastEl.className = 'toast'; document.body.appendChild(toastEl); }
+    toastEl.textContent = msg;
+    requestAnimationFrame(function(){ toastEl.classList.add('show'); });
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function(){ toastEl.classList.remove('show'); }, 3200);
+  }
+  refreshBtn.addEventListener('click', function(){
+    if(!reduceMotion){ refreshBtn.classList.add('spinning'); setTimeout(function(){ refreshBtn.classList.remove('spinning'); }, 500); }
+    renderAll();
+    showToast('ℹ️ 이 페이지는 정적 스냅샷입니다 · 최신 시그널은 topdown-strategy/export_snapshot.py 를 실행해 갱신하세요');
+  });
+
+  // ---- Theme toggle ----
+  var rootEl = document.documentElement;
+  var toggle = document.getElementById('themeToggle');
+  var stored = null;
+  try { stored = localStorage.getItem('topdown-theme'); } catch(e){}
+  var prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+  var current = stored || (prefersDark ? 'dark' : 'light');
+  function applyTheme(t){
+    rootEl.setAttribute('data-theme', t);
+    toggle.textContent = t === 'dark' ? '☀️' : '🌙';
+    toggle.setAttribute('aria-label', t === 'dark' ? '라이트 모드로 전환' : '다크 모드로 전환');
+  }
+  applyTheme(current);
+  toggle.addEventListener('click', function(){
+    var next = rootEl.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+    applyTheme(next);
+    try { localStorage.setItem('topdown-theme', next); } catch(e){}
+  });
+})();
+</script>
