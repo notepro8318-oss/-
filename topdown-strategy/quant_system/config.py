@@ -87,7 +87,8 @@ BREAKOUT_CANDLE_ATR_RATIO = 0.5
 # Risk Management
 # ------------------------------------------------------------------
 ATR_PERIOD = 14
-STOP_INITIAL_PCT = 0.05          # EntryPrice * (1 - 5%)
+STOP_INITIAL_PCT = 0.05          # ATR 정보가 없을 때만 사용하는 대체 하한 (EntryPrice * (1 - 5%))
+STOP_ATR_MULT = 1.0              # StopPrice = min(MA20_entry, EntryPrice - STOP_ATR_MULT * ATR)
 BREAKEVEN_ATR_TRIGGER = 1.0      # 1*ATR 상승 시 손절가 -> 본전
 TRAIL_ATR_MULT = 3.0             # PeakPrice - 3*ATR 트레일링
 SIDEWAYS_PARTIAL_ATR_TRIGGER = 1.5

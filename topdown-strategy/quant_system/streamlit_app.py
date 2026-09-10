@@ -222,7 +222,7 @@ try:
         signal = s.get("signal")
         if not signal:
             continue
-        stop = execution.initial_stop(signal["entry_price"], signal["ma20"])
+        stop = execution.initial_stop(signal["entry_price"], signal["ma20"], signal.get("atr"))
         sizing = risk_manager.position_size(capital, signal["entry_price"], stop, risk_manager.regime_multiplier(regime))
         if sizing["shares"] <= 0:
             continue

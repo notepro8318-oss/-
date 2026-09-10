@@ -105,8 +105,10 @@ class TopDownBacktester:
         regime_df = self.regime_detector.classify(benchmark_df)
 
         warmup = max(STOCK_MA_LONG, LOOKBACK_52W, MRS_LOOKBACK) + 5
-        min_start_idx = warmup
-        common_index = benchmark_df.index[min_start_idx:]
+        usable_index = benchmark_df.index[warmup:]
+
+        target_days = self.years * 252
+        common_index = usable_index[-target_days:] if len(usable_index) > target_days else usable_index
 
         rebalance_dates = set(self._weekly_rebalance_dates(benchmark_df.index))
 
@@ -189,7 +191,7 @@ class TopDownBacktester:
 
                         entry_price_raw = signal["entry_price"]
                         entry_price = entry_price_raw * (1 + self.cost_rate)
-                        stop = self.execution.initial_stop(entry_price, signal["ma20"])
+                        stop = self.execution.initial_stop(entry_price, signal["ma20"], signal.get("atr"))
 
                         equity_now = cash + sum(
                             p.shares * float(universe[t].loc[current_date, "Close"])

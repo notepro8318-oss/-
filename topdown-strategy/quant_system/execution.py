@@ -13,7 +13,7 @@ from config import (
     PULLBACK_BAND_UPPER, PULLBACK_BAND_LOWER, PULLBACK_VOLUME_RATIO, PULLBACK_VOLUME_MA,
     BREAKOUT_LOOKBACK, BREAKOUT_VOLUME_MA, BREAKOUT_VOLUME_RATIO,
     BREAKOUT_ATR_PERIOD, BREAKOUT_CANDLE_ATR_RATIO,
-    ATR_PERIOD, STOP_INITIAL_PCT, BREAKEVEN_ATR_TRIGGER, TRAIL_ATR_MULT,
+    ATR_PERIOD, STOP_INITIAL_PCT, STOP_ATR_MULT, BREAKEVEN_ATR_TRIGGER, TRAIL_ATR_MULT,
     SIDEWAYS_PARTIAL_ATR_TRIGGER, SIDEWAYS_PARTIAL_FRACTION,
 )
 
@@ -87,9 +87,19 @@ class ExecutionEngine:
 
         return None
 
-    def initial_stop(self, entry_price: float, ma20_at_entry: float) -> float:
-        """StopPrice = max(EntryPrice * 0.95, MA20_entry)."""
-        return max(entry_price * (1 - STOP_INITIAL_PCT), ma20_at_entry)
+    def initial_stop(self, entry_price: float, ma20_at_entry: float, atr: float | None = None) -> float:
+        """StopPrice = min(MA20_entry, EntryPrice - 1*ATR).
+
+        눌림목(Trigger A) 진입은 정의상 MA20에 바짝 붙어 체결되므로, MA20을 그대로
+        손절가로 쓰면 손절폭이 1~1.5% 수준으로 지나치게 좁아져 정상적인 일중
+        변동성에도 쉽게 스탑아웃된다. ATR 기준 최소 폭(1*ATR)을 함께 반영해
+        MA20과 ATR-스탑 중 더 낮은(=더 여유 있는) 가격을 손절가로 사용한다.
+        ATR을 알 수 없을 때만 EntryPrice*(1-STOP_INITIAL_PCT)를 대체 하한으로 쓴다.
+        """
+        if atr and atr > 0:
+            atr_stop = entry_price - STOP_ATR_MULT * atr
+            return min(ma20_at_entry, atr_stop)
+        return min(ma20_at_entry, entry_price * (1 - STOP_INITIAL_PCT))
 
     def update_trailing_stop(self, entry_price: float, current_stop: float, peak_price: float,
                               current_close: float, atr: float) -> tuple[float, float]:

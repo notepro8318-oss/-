@@ -72,7 +72,7 @@ class TopDownQuantSystem:
                 if not signal:
                     continue
 
-                stop = self.execution.initial_stop(signal["entry_price"], signal["ma20"])
+                stop = self.execution.initial_stop(signal["entry_price"], signal["ma20"], signal.get("atr"))
                 regime_mult = self.risk_manager.regime_multiplier(regime)
                 sizing = self.risk_manager.position_size(self.capital, signal["entry_price"], stop, regime_mult)
                 if sizing["shares"] <= 0:
