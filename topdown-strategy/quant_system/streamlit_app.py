@@ -103,15 +103,37 @@ def fmt_pct(v: float) -> str:
     return f"{v:+.2f}%" if v is not None else "N/A"
 
 
+def _fmt_comma(v) -> str:
+    """숫자를 3자리마다 콤마를 넣은 문자열로 변환한다 (예: 1000000 -> '1,000,000')."""
+    try:
+        n = float(v)
+    except (TypeError, ValueError):
+        return "0"
+    return f"{int(n):,}" if n == int(n) else f"{n:,.2f}"
+
+
+def _parse_comma(s: str) -> float:
+    """콤마/공백 등을 제거하고 숫자만 남겨 float으로 변환한다. 빈 값이면 0."""
+    digits = "".join(ch for ch in str(s) if ch.isdigit() or ch == ".")
+    return float(digits) if digits else 0.0
+
+
 # ------------------------------------------------------------------
 # 사이드바
 # ------------------------------------------------------------------
 usd_krw_rate = load_usd_krw_rate()
 
 
-def _sync_usd_from_krw():
+def _on_krw_change():
+    raw = _parse_comma(st.session_state["capital_krw_text"])
+    st.session_state["capital_krw_text"] = _fmt_comma(raw)
     if usd_krw_rate:
-        st.session_state["capital_usd"] = round(st.session_state["capital_krw"] / usd_krw_rate, 2)
+        st.session_state["capital_usd_text"] = _fmt_comma(round(raw / usd_krw_rate, 2))
+
+
+def _on_usd_change():
+    raw = _parse_comma(st.session_state["capital_usd_text"])
+    st.session_state["capital_usd_text"] = _fmt_comma(raw)
 
 
 with st.sidebar:
@@ -124,13 +146,18 @@ with st.sidebar:
         st.caption("⚠️ 환율 조회 실패 — 달러 금액을 직접 입력해 주세요.")
         default_krw = int(INITIAL_EQUITY * 1_300)
 
-    st.number_input(
-        "계좌 자본금 (₩)", min_value=0, value=default_krw, step=100_000,
-        key="capital_krw", on_change=_sync_usd_from_krw, disabled=usd_krw_rate is None,
-        help="원화로 입력하면 실시간 환율로 환산되어 아래 달러 금액에 자동 반영됩니다.",
+    st.text_input(
+        "계좌 자본금 (₩)", value=_fmt_comma(default_krw),
+        key="capital_krw_text", on_change=_on_krw_change, disabled=usd_krw_rate is None,
+        help="원화로 입력하면 실시간 환율로 환산되어 아래 달러 금액에 자동 반영됩니다. "
+             "3자리마다 콤마(,)가 자동으로 표시됩니다.",
     )
-    capital = st.number_input("계좌 자본금 ($)", min_value=1_000, value=int(INITIAL_EQUITY),
-                               step=1_000, key="capital_usd")
+    st.text_input(
+        "계좌 자본금 ($)", value=_fmt_comma(INITIAL_EQUITY),
+        key="capital_usd_text", on_change=_on_usd_change,
+        help="3자리마다 콤마(,)가 자동으로 표시됩니다.",
+    )
+    capital = _parse_comma(st.session_state["capital_usd_text"])
     st.caption(f"1회 진입 리스크: 자본의 {V2_RISK_PCT*100:.0f}% · 단일종목 상한: 자본의 {V2_POSITION_CAP_PCT*100:.0f}%")
 
     if st.button("🔄 시그널 새로고침", use_container_width=True):
