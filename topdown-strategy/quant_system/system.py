@@ -7,8 +7,9 @@ MarketRegimeDetector -> SectorRotationEngine -> MomentumRanker -> ExecutionEngin
 
 v1(AND 하드필터 + 눌림목/돌파 타이밍 대기)에서 v2(Cross-Sectional 모멘텀
 랭킹 + 즉시매수 + ATR 손절/분할익절/Runner 추세추종)로 전면 교체됐다.
-백테스트 결과 v1 최적조합(CAGR +6.83%) 대비 v2가 CAGR +16.65%로 크게
-우수해 프로덕션(일일 스캔/웹 대시보드)에 반영한다.
+포지션 비중은 CompositeScore 비례배분(점수가 좋을수록 더 큰 비중) 방식을
+사용한다 — 동일비중(CAGR +9.24%)·ATR리스크기반(CAGR +16.25%) 대비
+백테스트에서 가장 우수(CAGR +16.39%, Sharpe 1.13)했다.
 
 실행 방법
 ---------
@@ -87,8 +88,15 @@ class TopDownQuantSystem:
 
         top_stocks = ranked.head(TOP_STOCK_COUNT)
         print(f"\n[Module4-매수후보 & 리스크관리] (즉시매수, Runner 전략: 손절=진입가-2.5×ATR, "
-              f"+10%/+20% 각 30%씩 분할익절 후 잔여 40%는 MA50 이탈까지 추세추종)")
+              f"+10%/+20% 각 30%씩 분할익절 후 잔여 40%는 MA50 이탈까지 추세추종, "
+              f"비중=CompositeScore 비례배분)")
         regime_mult = self.risk_manager.regime_multiplier(regime)
+
+        # CompositeScore 비례배분: 점수가 좋을수록(낮을수록) 비중이 커지도록 1/score로 가중,
+        # 이번 상위 N종목 내에서 합이 1이 되도록 정규화한다.
+        inv_scores = {t: 1.0 / s for t, s in top_stocks["composite_score"].items() if s and s > 0}
+        total_inv = sum(inv_scores.values())
+
         stock_used = 0.0
         for ticker, row in top_stocks.iterrows():
             df = candidates_data[ticker]
@@ -98,14 +106,18 @@ class TopDownQuantSystem:
                 continue
             entry_price = float(df["Close"].iloc[-1])
             stop = self.execution.initial_stop_v2(entry_price, float(atr))
-            sizing = self.risk_manager.position_size(self.capital, entry_price, stop, regime_mult)
-            if sizing["shares"] <= 0:
+
+            weight = (inv_scores.get(ticker, 0.0) / total_inv) if total_inv > 0 else 0.0
+            position_value = self.capital * regime_mult * weight
+            shares = int(position_value // entry_price)
+            if shares <= 0:
                 continue
-            stock_used += sizing["position_value"]
+            actual_value = shares * entry_price
+            stock_used += actual_value
             sector = ticker_sector_map.get(ticker, "-")
             print(f"  ✅ {ticker:6s} 섹터={sector:5s} 진입가={entry_price:.2f} 손절={stop:.2f} "
                   f"CompositeScore={row['composite_score']:.1f} MRS={row['mrs']:+.1f} "
-                  f"수량={sizing['shares']}주 (투입금액={sizing['position_value']:,.0f})")
+                  f"비중={weight*100:.1f}% 수량={shares}주 (투입금액={actual_value:,.0f})")
 
         if IDLE_CASH_FALLBACK_ENABLED and regime == "BULL":
             idle_estimate = self.capital - stock_used
@@ -117,7 +129,8 @@ class TopDownQuantSystem:
     def run_backtest(self, years: int = 3) -> dict:
         """3년(기본) 백테스트를 실행하고 성과 dict를 반환한다."""
         bt = TopDownBacktesterV2(years=years, initial_equity=self.capital,
-                                  risk_pct=V2_RISK_PCT, position_cap_pct=V2_POSITION_CAP_PCT)
+                                  risk_pct=V2_RISK_PCT, position_cap_pct=V2_POSITION_CAP_PCT,
+                                  sizing_mode="composite_score")
         stats = bt.run()
         bt.print_report()
         return stats

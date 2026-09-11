@@ -72,11 +72,22 @@ class TopDownBacktesterV2:
 
     def __init__(self, years: int = 3, initial_equity: float = INITIAL_EQUITY,
                  cost_bps: float = COST_BPS, max_positions: int = TOP_STOCK_COUNT,
-                 risk_pct: float = 0.03, position_cap_pct: float = 0.40) -> None:
+                 risk_pct: float = 0.03, position_cap_pct: float = 0.40,
+                 sizing_mode: str = "risk_atr") -> None:
+        """
+        sizing_mode : {"risk_atr", "equal", "composite_score"}
+            - "risk_atr": 기존 방식. RiskManager의 고정비율 리스크(ATR 손절폭 기반) 사이징.
+            - "equal": 매수 후보 max_positions개에 자본을 동일 비중(1/N)으로 배분.
+            - "composite_score": CompositeScore가 좋을수록(낮을수록) 더 큰 비중을 배분
+              (가중치 ∝ 1/CompositeScore, 그 주 후보군 내에서 정규화).
+        두 경우 모두 손절/분할익절/Runner 청산 로직은 동일하게 ATR 기반을 사용하고,
+        "진입 수량(비중)"만 다르게 계산한다.
+        """
         self.years = years
         self.initial_equity = initial_equity
         self.cost_rate = cost_bps / 10_000.0
         self.max_positions = max_positions
+        self.sizing_mode = sizing_mode
 
         self.regime_detector = MarketRegimeDetector()
         self.sector_engine = SectorRotationEngine()
@@ -131,6 +142,7 @@ class TopDownBacktesterV2:
 
         active_leaders: list[str] = []
         approved_candidates: list[str] = []
+        candidate_scores: dict[str, float] = {}
 
         cash = self.initial_equity
         stock_positions: dict[str, StockPosition] = {}
@@ -171,8 +183,15 @@ class TopDownBacktesterV2:
                     for ticker in SECTOR_STOCKS.get(sector, []):
                         if ticker in universe and current_date in universe[ticker].index:
                             candidates_data[ticker] = universe[ticker].loc[:current_date]
-                approved_candidates = self.ranker.select_top_stocks(candidates_data, benchmark_df.loc[:current_date]) \
-                    if candidates_data else []
+
+                if candidates_data:
+                    ranked_df = self.ranker.rank_candidates(candidates_data, benchmark_df.loc[:current_date])
+                    top_ranked = ranked_df.head(self.max_positions)
+                    approved_candidates = top_ranked.index.tolist()
+                    candidate_scores = top_ranked["composite_score"].to_dict()
+                else:
+                    approved_candidates = []
+                    candidate_scores = {}
 
             # ---- 보유 주식 포지션 관리 (Runner 전략) ----
             for ticker in list(stock_positions.keys()):
@@ -264,8 +283,20 @@ class TopDownBacktesterV2:
                         continue
 
                     equity_now = mark_to_market(current_date)
-                    sizing = self.risk_manager.position_size(equity_now, entry_price, stop, regime_mult)
-                    shares = sizing["shares"]
+
+                    if self.sizing_mode == "equal":
+                        target_value = equity_now * regime_mult / self.max_positions
+                        shares = int(target_value // entry_price)
+                    elif self.sizing_mode == "composite_score":
+                        inv_scores = {t: 1.0 / s for t, s in candidate_scores.items() if s and s > 0}
+                        total_inv = sum(inv_scores.values())
+                        weight = (inv_scores.get(ticker, 0.0) / total_inv) if total_inv > 0 else 0.0
+                        target_value = equity_now * regime_mult * weight
+                        shares = int(target_value // entry_price)
+                    else:  # "risk_atr" (기존 방식)
+                        sizing = self.risk_manager.position_size(equity_now, entry_price, stop, regime_mult)
+                        shares = sizing["shares"]
+
                     cost = shares * entry_price
                     if shares <= 0:
                         continue

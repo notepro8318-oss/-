@@ -247,12 +247,15 @@ try:
 - **+{TP1_PCT*100:.0f}%** 도달 시 물량의 {TP1_FRACTION*100:.0f}% 분할익절 + 본전 손절가 상향
 - **+{TP2_PCT*100:.0f}%** 도달 시 추가 {TP2_FRACTION*100:.0f}% 분할익절
 - 잔여 {(1-TP1_FRACTION-TP2_FRACTION)*100:.0f}%는 종가가 MA{RUNNER_EXIT_MA_PERIOD} 아래로 이탈할 때까지 추세추종(Runner)
-- 포지션 사이징 = min(리스크허용액÷주당위험액, 자본×{V2_POSITION_CAP_PCT*100:.0f}%÷진입가) × 국면 노출 승수
+- **포지션 비중** = CompositeScore 비례배분 — 점수가 좋을수록(낮을수록) 비중이 커지도록 1/Score로 가중해
+  이번 상위 {TOP_STOCK_COUNT}종목 내에서 정규화(합 100%) × 국면 노출 승수
 """)
 
     stock_value = 0.0
     if top_stocks is not None:
         regime_mult = risk_manager.regime_multiplier(regime)
+        inv_scores = {t: 1.0 / s for t, s in top_stocks["composite_score"].items() if s and s > 0}
+        total_inv = sum(inv_scores.values())
         signal_count = 0
         for ticker, row in top_stocks.iterrows():
             df = candidates_data[ticker]
@@ -262,20 +265,25 @@ try:
                 continue
             entry_price = float(df["Close"].iloc[-1])
             stop = execution.initial_stop_v2(entry_price, float(atr))
-            sizing = risk_manager.position_size(capital, entry_price, stop, regime_mult)
-            if sizing["shares"] <= 0:
+
+            weight = (inv_scores.get(ticker, 0.0) / total_inv) if total_inv > 0 else 0.0
+            position_value = capital * regime_mult * weight
+            shares = int(position_value // entry_price)
+            if shares <= 0:
                 continue
+            actual_value = shares * entry_price
             signal_count += 1
-            stock_value += sizing["position_value"]
+            stock_value += actual_value
 
             with st.container(border=True):
                 st.markdown(f"### ✅ {ticker} · `{ticker_sector_map.get(ticker, '-')}` · CompositeScore {row['composite_score']:.1f}")
-                r1, r2, r3, r4, r5 = st.columns(5)
+                r1, r2, r3, r4, r5, r6 = st.columns(6)
                 r1.metric("진입가", f"{entry_price:.2f}")
                 r2.metric("손절가", f"{stop:.2f}")
-                r3.metric("수량", f"{sizing['shares']:,}주")
-                r4.metric("투입금액", f"${sizing['position_value']:,.0f}")
-                r5.metric("MRS", f"{row['mrs']:+.2f}")
+                r3.metric("비중", f"{weight*100:.1f}%")
+                r4.metric("수량", f"{shares:,}주")
+                r5.metric("투입금액", f"${actual_value:,.0f}")
+                r6.metric("MRS", f"{row['mrs']:+.2f}")
 
         if signal_count == 0:
             st.info("오늘은 매수 가능한 후보가 없습니다.")
@@ -296,7 +304,8 @@ except Exception as e:
 # ================================================================
 st.header("📈 백테스트 (TopDownBacktesterV2)", divider="gray")
 st.caption(f"전체 유니버스(벤치마크+섹터ETF 11개+대표종목 ~{sum(len(v) for v in SECTOR_STOCKS.values())}개) 다운로드로 "
-           "수 분 정도 걸릴 수 있습니다. 검증 결과: 3년 기준 CAGR +16.65% · MDD -15.66% · Sharpe 1.08 · 승률 64.5%.")
+           "수 분 정도 걸릴 수 있습니다. 포지션 비중은 CompositeScore 비례배분. "
+           "검증 결과: 3년 기준 CAGR +16.39% · MDD -13.86% · Sharpe 1.13 · 승률 63.6%.")
 
 with st.expander("▶ 백테스트 실행하기"):
     bt_years = st.slider("백테스트 기간(년)", min_value=1, max_value=5, value=BACKTEST_YEARS)
@@ -308,7 +317,8 @@ with st.expander("▶ 백테스트 실행하기"):
         with st.spinner(f"최근 {bt_years}년(+워밍업 2년) 데이터 다운로드 및 백테스트 실행 중... 잠시만 기다려주세요."):
             try:
                 bt = TopDownBacktesterV2(years=bt_years, initial_equity=capital,
-                                          risk_pct=V2_RISK_PCT, position_cap_pct=V2_POSITION_CAP_PCT)
+                                          risk_pct=V2_RISK_PCT, position_cap_pct=V2_POSITION_CAP_PCT,
+                                          sizing_mode="composite_score")
                 stats = bt.run()
             except Exception as e:
                 st.error(f"백테스트 실행 중 오류: {e}")
