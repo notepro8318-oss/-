@@ -90,6 +90,15 @@ def load_ranked_candidates(leaders: list, _bench_df):
     return ranked, candidates_data, ticker_sector_map
 
 
+@st.cache_data(ttl=CACHE_TTL, show_spinner=False)
+def load_usd_krw_rate():
+    """실시간 USD/KRW 환율(1달러 = ?원)을 조회한다. 실패 시 None."""
+    df = fetch_ohlcv("KRW=X", period="5d")
+    if df.empty:
+        return None
+    return float(df["Close"].iloc[-1])
+
+
 def fmt_pct(v: float) -> str:
     return f"{v:+.2f}%" if v is not None else "N/A"
 
@@ -97,9 +106,31 @@ def fmt_pct(v: float) -> str:
 # ------------------------------------------------------------------
 # 사이드바
 # ------------------------------------------------------------------
+usd_krw_rate = load_usd_krw_rate()
+
+
+def _sync_usd_from_krw():
+    if usd_krw_rate:
+        st.session_state["capital_usd"] = round(st.session_state["capital_krw"] / usd_krw_rate, 2)
+
+
 with st.sidebar:
     st.header("⚙️ 설정")
-    capital = st.number_input("계좌 자본금 ($)", min_value=1_000, value=int(INITIAL_EQUITY), step=1_000)
+
+    if usd_krw_rate:
+        st.caption(f"실시간 환율(USD/KRW): 1달러 = {usd_krw_rate:,.2f}원")
+        default_krw = int(INITIAL_EQUITY * usd_krw_rate)
+    else:
+        st.caption("⚠️ 환율 조회 실패 — 달러 금액을 직접 입력해 주세요.")
+        default_krw = int(INITIAL_EQUITY * 1_300)
+
+    st.number_input(
+        "계좌 자본금 (₩)", min_value=0, value=default_krw, step=100_000,
+        key="capital_krw", on_change=_sync_usd_from_krw, disabled=usd_krw_rate is None,
+        help="원화로 입력하면 실시간 환율로 환산되어 아래 달러 금액에 자동 반영됩니다.",
+    )
+    capital = st.number_input("계좌 자본금 ($)", min_value=1_000, value=int(INITIAL_EQUITY),
+                               step=1_000, key="capital_usd")
     st.caption(f"1회 진입 리스크: 자본의 {V2_RISK_PCT*100:.0f}% · 단일종목 상한: 자본의 {V2_POSITION_CAP_PCT*100:.0f}%")
 
     if st.button("🔄 시그널 새로고침", use_container_width=True):
