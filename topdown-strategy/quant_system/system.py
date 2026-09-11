@@ -20,13 +20,13 @@ from __future__ import annotations
 
 import sys
 
-from config import (
+from qs_config import (
     SECTOR_STOCKS, INITIAL_EQUITY, BENCHMARK, SECTOR_ETFS,
     TOP_STOCK_COUNT, IDLE_CASH_FALLBACK_ENABLED, FALLBACK_INDEX_TICKER,
 )
 from data import fetch_ohlcv
 from regime import MarketRegimeDetector
-from sector import SectorRotationEngine
+from qs_sector import SectorRotationEngine
 from screener import MomentumRanker
 from execution import ExecutionEngine
 from risk import RiskManager

@@ -13,13 +13,13 @@ from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
 
-from config import (
+from qs_config import (
     SECTOR_ETFS, SECTOR_STOCKS, BENCHMARK, COST_BPS, INITIAL_EQUITY,
     MAX_POSITIONS_BULL, STOCK_MA_LONG, LOOKBACK_52W, MRS_LOOKBACK,
 )
 from data import fetch_ohlcv
 from regime import MarketRegimeDetector
-from sector import SectorRotationEngine
+from qs_sector import SectorRotationEngine
 from screener import StockScreener
 from execution import ExecutionEngine
 from risk import RiskManager

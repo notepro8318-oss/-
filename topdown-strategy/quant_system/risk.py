@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import math
 
-from config import RISK_PCT, POSITION_CAP_PCT, MIN_DPS_FLOOR_PCT, REGIME_EXPOSURE
+from qs_config import RISK_PCT, POSITION_CAP_PCT, MIN_DPS_FLOOR_PCT, REGIME_EXPOSURE
 
 
 class RiskManager:

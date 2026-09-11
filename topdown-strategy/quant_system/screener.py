@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from config import (
+from qs_config import (
     STOCK_MA_SHORT, STOCK_MA_MID, STOCK_MA_LONG,
     MA_LONG_TREND_LOOKBACK, MA_LONG_TREND_MIN_PCT,
     LOOKBACK_52W, NEAR_52W_HIGH_RATIO, ABOVE_52W_LOW_RATIO, MRS_LOOKBACK,

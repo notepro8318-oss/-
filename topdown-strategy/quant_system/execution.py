@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from config import (
+from qs_config import (
     PULLBACK_BAND_UPPER, PULLBACK_BAND_LOWER, PULLBACK_VOLUME_RATIO, PULLBACK_VOLUME_MA,
     BREAKOUT_LOOKBACK, BREAKOUT_VOLUME_MA, BREAKOUT_VOLUME_RATIO,
     BREAKOUT_ATR_PERIOD, BREAKOUT_CANDLE_ATR_RATIO,

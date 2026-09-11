@@ -28,7 +28,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import streamlit as st
 
-from config import (
+from qs_config import (
     BENCHMARK, SECTOR_ETFS, DEFENSIVE_ETFS, SECTOR_STOCKS,
     ROC_SHORT, ROC_LONG, TOP_SECTOR_COUNT, TOP_STOCK_COUNT,
     STOP_ATR_MULT_V2, TP1_PCT, TP1_FRACTION, TP2_PCT, TP2_FRACTION, RUNNER_EXIT_MA_PERIOD,
@@ -37,7 +37,7 @@ from config import (
 )
 from data import fetch_ohlcv
 from regime import MarketRegimeDetector
-from sector import SectorRotationEngine
+from qs_sector import SectorRotationEngine
 from screener import MomentumRanker
 from execution import ExecutionEngine
 from risk import RiskManager

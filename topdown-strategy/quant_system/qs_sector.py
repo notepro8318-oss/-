@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from config import (
+from qs_config import (
     SECTOR_ETFS, DEFENSIVE_ETFS, ROC_SHORT, ROC_LONG,
     RANK_WEIGHT_SHORT, RANK_WEIGHT_LONG, TOP_SECTOR_COUNT,
 )

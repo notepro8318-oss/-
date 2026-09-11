@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from config import (
+from qs_config import (
     MA_SHORT, MA_LONG, SLOPE_LOOKBACK, SLOPE_THRESHOLD, BAND_PCT,
     CONFIRM_DAYS, REGIME_EXPOSURE,
 )

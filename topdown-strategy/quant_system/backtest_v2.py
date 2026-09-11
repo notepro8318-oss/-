@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
 
-from config import (
+from qs_config import (
     SECTOR_ETFS, SECTOR_STOCKS, BENCHMARK, COST_BPS, INITIAL_EQUITY,
     STOCK_MA_LONG, LOOKBACK_52W, MRS_LOOKBACK, MOM_12_1_START,
     TOP_STOCK_COUNT, TP1_PCT, TP1_FRACTION, TP2_PCT, TP2_FRACTION,
@@ -28,7 +28,7 @@ from config import (
 )
 from data import fetch_ohlcv
 from regime import MarketRegimeDetector
-from sector import SectorRotationEngine
+from qs_sector import SectorRotationEngine
 from screener import MomentumRanker
 from execution import ExecutionEngine
 from risk import RiskManager
