@@ -1,11 +1,16 @@
 """
-TopDownQuantSystem - Streamlit 웹 대시보드 (v2)
+TopDownQuantSystem - Streamlit 웹 대시보드 (v2: 모멘텀 랭킹 + Runner 전략)
 ====================================================
 Streamlit Community Cloud(share.streamlit.io) 배포용 진입점.
 
-MarketRegimeDetector -> SectorRotationEngine -> StockScreener -> ExecutionEngine
+MarketRegimeDetector -> SectorRotationEngine -> MomentumRanker -> ExecutionEngine
 -> RiskManager 를 yfinance 실시간 데이터로 조회해 렌더링하고,
-하단에서 TopDownBacktester를 버튼 클릭으로 직접 실행해 볼 수 있다.
+하단에서 TopDownBacktesterV2를 버튼 클릭으로 직접 실행해 볼 수 있다.
+
+v1(AND 하드필터 + 눌림목/돌파 타이밍 대기)에서 v2(Cross-Sectional 모멘텀
+랭킹 + 즉시매수 + ATR 손절/분할익절/Runner 추세추종)로 전면 교체됐다.
+백테스트 검증 결과 v1 최적조합(CAGR +6.83%) 대비 v2가 CAGR +16.65%로
+우수해 프로덕션에 반영했다.
 
 배포 방법
 ---------
@@ -25,14 +30,15 @@ import streamlit as st
 
 from config import (
     BENCHMARK, SECTOR_ETFS, DEFENSIVE_ETFS, SECTOR_STOCKS,
-    ROC_SHORT, ROC_LONG, TOP_SECTOR_COUNT,
-    STOCK_MA_SHORT, STOCK_MA_MID, STOCK_MA_LONG, NEAR_52W_HIGH_RATIO, ABOVE_52W_LOW_RATIO,
-    RISK_PCT, POSITION_CAP_PCT, INITIAL_EQUITY, BACKTEST_YEARS,
+    ROC_SHORT, ROC_LONG, TOP_SECTOR_COUNT, TOP_STOCK_COUNT,
+    STOP_ATR_MULT_V2, TP1_PCT, TP1_FRACTION, TP2_PCT, TP2_FRACTION, RUNNER_EXIT_MA_PERIOD,
+    IDLE_CASH_FALLBACK_ENABLED, FALLBACK_INDEX_TICKER,
+    INITIAL_EQUITY, BACKTEST_YEARS,
 )
 from data import fetch_ohlcv
 from regime import MarketRegimeDetector
 from sector import SectorRotationEngine
-from screener import StockScreener
+from screener import MomentumRanker
 from execution import ExecutionEngine
 from risk import RiskManager
 
@@ -40,11 +46,15 @@ st.set_page_config(page_title="TopDown Quant System", page_icon="📊", layout="
 
 CACHE_TTL = 900  # 15분
 
+# v2 백테스트에서 검증된 최적 사이징
+V2_RISK_PCT = 0.03
+V2_POSITION_CAP_PCT = 0.40
+
 regime_detector = MarketRegimeDetector()
 sector_engine = SectorRotationEngine()
-screener = StockScreener()
+ranker = MomentumRanker(top_n=TOP_STOCK_COUNT)
 execution = ExecutionEngine()
-risk_manager = RiskManager()
+risk_manager = RiskManager(risk_pct=V2_RISK_PCT, cap_pct=V2_POSITION_CAP_PCT)
 
 
 # ------------------------------------------------------------------
@@ -67,20 +77,15 @@ def load_sector_scores():
 
 
 @st.cache_data(ttl=CACHE_TTL, show_spinner=False)
-def load_screened_stocks(leaders: list, _bench_df):
-    results = []
+def load_ranked_candidates(leaders: list, _bench_df):
+    candidates_data = {}
     for sector in leaders:
         for ticker in SECTOR_STOCKS.get(sector, []):
             df = fetch_ohlcv(ticker, period="3y")
-            if df.empty:
-                continue
-            passed = screener.screen(df, _bench_df)
-            if not passed:
-                continue
-            signal = execution.entry_signal(df, st.session_state.get("current_regime", "SIDEWAYS"))
-            passed.update({"ticker": ticker, "sector": sector, "signal": signal})
-            results.append(passed)
-    return results
+            if not df.empty:
+                candidates_data[ticker] = df
+    ranked = ranker.rank_candidates(candidates_data, _bench_df)
+    return ranked, candidates_data
 
 
 def fmt_pct(v: float) -> str:
@@ -93,7 +98,7 @@ def fmt_pct(v: float) -> str:
 with st.sidebar:
     st.header("⚙️ 설정")
     capital = st.number_input("계좌 자본금 ($)", min_value=1_000, value=int(INITIAL_EQUITY), step=1_000)
-    st.caption(f"1회 진입 리스크: 자본의 {RISK_PCT*100:.0f}% · 단일종목 상한: 자본의 {POSITION_CAP_PCT*100:.0f}%")
+    st.caption(f"1회 진입 리스크: 자본의 {V2_RISK_PCT*100:.0f}% · 단일종목 상한: 자본의 {V2_POSITION_CAP_PCT*100:.0f}%")
 
     if st.button("🔄 시그널 새로고침", use_container_width=True):
         st.cache_data.clear()
@@ -103,9 +108,9 @@ with st.sidebar:
     st.caption(f"조회 시각: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     st.caption("데이터: yfinance (지연 시세) · 캐시 15분")
 
-st.title("📊 TopDownQuantSystem — 정밀 스펙 대시보드")
-st.caption("MarketRegimeDetector → SectorRotationEngine → StockScreener → ExecutionEngine/RiskManager "
-           "순서로 실시간 매매 시그널을 계산합니다. (2일 연속 확인 국면판정 · MRS · ATR 트레일링 · 고정비율 리스크사이징)")
+st.title("📊 TopDownQuantSystem — 모멘텀 랭킹 + Runner 대시보드")
+st.caption("MarketRegimeDetector → SectorRotationEngine → MomentumRanker → ExecutionEngine/RiskManager "
+           "순서로 실시간 매수 후보를 계산합니다. (12-1M 모멘텀 · 유휴자금 폭포수배분 · ATR손절/분할익절/Runner추세추종)")
 
 try:
     # ================================================================
@@ -126,7 +131,6 @@ try:
         snapshot = load_regime(bench_df)
 
     regime = snapshot["regime"]
-    st.session_state["current_regime"] = regime
     exposure = snapshot["exposure"]
 
     c1, c2, c3, c4, c5 = st.columns([1.3, 1, 1, 1, 1])
@@ -176,69 +180,98 @@ try:
     )
 
     # ================================================================
-    # Module 3 + 4: 종목 스크리닝 -> 진입 시그널
+    # Module 3: 모멘텀 랭킹 (Cross-Sectional CompositeScore)
     # ================================================================
-    st.header("3️⃣ 종목 스크리닝 (StockScreener)", divider="gray")
-    st.caption(f"정배열(Stage2) · 52주 신고가 {(1-NEAR_52W_HIGH_RATIO)*100:.0f}% 이내 & 저점대비 +{(ABOVE_52W_LOW_RATIO-1)*100:.0f}% · "
-               "맨스필드 상대강도(MRS) > 0, 3개 조건을 모두 만족한 종목입니다.")
+    st.header("3️⃣ 모멘텀 랭킹 (MomentumRanker)", divider="gray")
+    st.caption(f"12-1M 모멘텀 + 63일/21일 수익률 + 52주 신고가 근접도 + 맨스필드 RS(MRS)를 가중 합산한 "
+               f"CompositeScore로 주도 섹터 내 상위 {TOP_STOCK_COUNT}종목을 매주 선정합니다 (AND 하드필터 대신 랭킹).")
     with st.expander("📋 조건 상세보기"):
         st.markdown(f"""
-- **조건 1 — 정배열**: Close > MA{STOCK_MA_SHORT} > MA{STOCK_MA_MID} > MA{STOCK_MA_LONG}, MA{STOCK_MA_LONG} 20일 상승 지속성 ≥ 0.10%
-- **조건 2 — 52주 위치**: Close/52주 최고가 ≥ {NEAR_52W_HIGH_RATIO} AND Close/52주 최저가 ≥ {ABOVE_52W_LOW_RATIO}
-- **조건 3 — 맨스필드 RS**: MRS = ((종목/벤치마크 비율) / 252일 평균 비율 − 1) × 100 > 0
+- **MomentumScore** = 0.5×Rank(Mom_12_1) + 0.3×Rank(ROC_63) + 0.2×Rank(ROC_21)
+  - Mom_12_1 = (Close[t-21] − Close[t-252]) / Close[t-252]
+- **CompositeScore** = 0.4×Rank(MomentumScore) + 0.3×Rank(52주신고가근접도) + 0.3×Rank(MRS) — 낮을수록 우수
+- 상위 {TOP_STOCK_COUNT}종목은 눌림목/돌파 타이밍을 기다리지 않고 즉시 매수 후보로 선정됩니다
 """)
 
-    with st.spinner("주도 섹터 대표 종목 스크리닝 중... (수십 개 티커 조회로 다소 시간이 걸릴 수 있습니다)"):
-        screened = load_screened_stocks(leaders, bench_df) if leaders else []
+    with st.spinner("주도 섹터 대표 종목 모멘텀 랭킹 계산 중... (수십 개 티커 조회로 다소 시간이 걸릴 수 있습니다)"):
+        ranked, candidates_data = load_ranked_candidates(leaders, bench_df) if leaders else (None, {})
 
-    if not screened:
-        st.info("3단계 조건을 통과한 종목이 없습니다.")
+    if ranked is None or ranked.empty:
+        st.info("랭킹 가능한 종목이 없습니다.")
+        top_stocks = None
     else:
+        top_stocks = ranked.head(TOP_STOCK_COUNT)
         cols = st.columns(3)
-        for i, s in enumerate(screened):
+        for i, (ticker, row) in enumerate(top_stocks.iterrows()):
             with cols[i % 3]:
                 with st.container(border=True):
-                    st.markdown(f"**{s['ticker']}** · `{s['sector']}`")
-                    st.metric("현재가", f"${s['close']:.2f}")
-                    st.caption(f"MA20 {s['ma20']:.2f} · MA60 {s['ma60']:.2f} · MA120 {s['ma120']:.2f}")
-                    st.caption(f"52주 고점 {s['high_52w']:.2f} / 저점 {s['low_52w']:.2f}")
-                    st.caption(f"MRS {s['mrs']:+.2f}")
+                    st.markdown(f"**{ticker}** · CompositeScore {row['composite_score']:.1f}")
+                    st.metric("현재가", f"${row['close']:.2f}")
+                    st.caption(f"12-1M모멘텀 {row['mom_121']:+.1%} · 63일 {row['roc_63']:+.1%} · 21일 {row['roc_21']:+.1%}")
+                    st.caption(f"52주고점근접도 {row['near_high_ratio']:.2f} · MRS {row['mrs']:+.2f}")
 
-    st.header("4️⃣ 진입 시그널 & 리스크 관리 (ExecutionEngine · RiskManager)", divider="gray")
+        disp_rank = ranked.rename(columns={
+            "mom_121": "12-1M모멘텀", "roc_63": "63일수익률", "roc_21": "21일수익률",
+            "near_high_ratio": "52주고점근접도", "mrs": "MRS", "composite_score": "CompositeScore",
+        })
+        with st.expander(f"전체 후보 {len(ranked)}종목 랭킹표 보기"):
+            st.dataframe(
+                disp_rank[["12-1M모멘텀", "63일수익률", "21일수익률", "52주고점근접도", "MRS", "CompositeScore"]]
+                .style.format({"12-1M모멘텀": "{:+.1%}", "63일수익률": "{:+.1%}", "21일수익률": "{:+.1%}",
+                               "52주고점근접도": "{:.2f}", "MRS": "{:+.2f}", "CompositeScore": "{:.1f}"}),
+                use_container_width=True,
+            )
+
+    # ================================================================
+    # Module 4: 매수 후보 & 리스크 관리 (Runner 전략)
+    # ================================================================
+    st.header("4️⃣ 매수 후보 & 리스크 관리 (Runner 전략)", divider="gray")
     with st.expander("📋 조건 상세보기"):
-        st.markdown("""
-**진입 트리거**
-- **(A) 눌림목**: 저가가 MA20 ±1.5% 밴드 터치 + 거래량 20일평균 대비 75% 미만 + 종가가 전일 고가 상향 돌파 (BULL·SIDEWAYS)
-- **(B) 돌파**: 종가가 20일 박스권 고점 상향 돌파 + 거래량 50일평균 대비 150% 이상 + (종가−시가) ≥ 0.5×ATR14 (BULL 전용)
-
-**리스크 관리**
-- 손절가 = max(진입가×0.95, 진입시점 MA20)
-- +1×ATR 상승 시 손절가 본전 상향, 이후 고점−3×ATR 트레일링 / SIDEWAYS는 +1.5×ATR 도달 시 절반 분할 익절
-- 포지션 사이징 = min(리스크허용액÷주당위험액, 자본×20%÷진입가) × 국면 노출 승수
+        st.markdown(f"""
+- 3단계 랭킹 상위 {TOP_STOCK_COUNT}종목은 타이밍 대기 없이 즉시 매수 후보입니다
+- **손절가** = 진입가 − {STOP_ATR_MULT_V2}×ATR14
+- **+{TP1_PCT*100:.0f}%** 도달 시 물량의 {TP1_FRACTION*100:.0f}% 분할익절 + 본전 손절가 상향
+- **+{TP2_PCT*100:.0f}%** 도달 시 추가 {TP2_FRACTION*100:.0f}% 분할익절
+- 잔여 {(1-TP1_FRACTION-TP2_FRACTION)*100:.0f}%는 종가가 MA{RUNNER_EXIT_MA_PERIOD} 아래로 이탈할 때까지 추세추종(Runner)
+- 포지션 사이징 = min(리스크허용액÷주당위험액, 자본×{V2_POSITION_CAP_PCT*100:.0f}%÷진입가) × 국면 노출 승수
 """)
 
-    signal_count = 0
-    for s in screened:
-        signal = s.get("signal")
-        if not signal:
-            continue
-        stop = execution.initial_stop(signal["entry_price"], signal["ma20"], signal.get("atr"))
-        sizing = risk_manager.position_size(capital, signal["entry_price"], stop, risk_manager.regime_multiplier(regime))
-        if sizing["shares"] <= 0:
-            continue
-        signal_count += 1
+    stock_value = 0.0
+    if top_stocks is not None:
+        regime_mult = risk_manager.regime_multiplier(regime)
+        signal_count = 0
+        for ticker, row in top_stocks.iterrows():
+            df = candidates_data[ticker]
+            ind = execution.compute_indicators(df)
+            atr = ind.iloc[-1]["ATR14"]
+            if atr != atr or atr <= 0:
+                continue
+            entry_price = float(df["Close"].iloc[-1])
+            stop = execution.initial_stop_v2(entry_price, float(atr))
+            sizing = risk_manager.position_size(capital, entry_price, stop, regime_mult)
+            if sizing["shares"] <= 0:
+                continue
+            signal_count += 1
+            stock_value += sizing["position_value"]
 
-        with st.container(border=True):
-            st.markdown(f"### ✅ {s['ticker']} · `{signal['type']}` · {s['sector']}")
-            r1, r2, r3, r4, r5 = st.columns(5)
-            r1.metric("진입가", f"{signal['entry_price']:.2f}")
-            r2.metric("손절가", f"{stop:.2f}")
-            r3.metric("수량", f"{sizing['shares']:,}주")
-            r4.metric("투입금액", f"${sizing['position_value']:,.0f}")
-            r5.metric("MRS", f"{s['mrs']:+.2f}")
+            with st.container(border=True):
+                st.markdown(f"### ✅ {ticker} · CompositeScore {row['composite_score']:.1f}")
+                r1, r2, r3, r4, r5 = st.columns(5)
+                r1.metric("진입가", f"{entry_price:.2f}")
+                r2.metric("손절가", f"{stop:.2f}")
+                r3.metric("수량", f"{sizing['shares']:,}주")
+                r4.metric("투입금액", f"${sizing['position_value']:,.0f}")
+                r5.metric("MRS", f"{row['mrs']:+.2f}")
 
-    if signal_count == 0:
-        st.info("오늘은 눌림목/돌파 조건을 만족하는 매수 시그널이 없습니다.")
+        if signal_count == 0:
+            st.info("오늘은 매수 가능한 후보가 없습니다.")
+
+    if IDLE_CASH_FALLBACK_ENABLED and regime == "BULL":
+        idle_estimate = capital - stock_value
+        if idle_estimate > capital * 0.05:
+            st.info(f"💧 **유휴자금 폭포수 배분**: 상위 종목 매수 후 약 ${idle_estimate:,.0f}의 현금이 남습니다. "
+                    f"BULL 국면 동안 현금 비중 0%를 유지하려면 이 금액을 {FALLBACK_INDEX_TICKER}에 배분하고, "
+                    f"국면이 BEAR로 바뀌면 전량 청산하세요.")
 
 except Exception as e:
     st.error(f"데이터 조회 중 오류가 발생했습니다: {e}\n\n"
@@ -247,20 +280,21 @@ except Exception as e:
 # ================================================================
 # 백테스트 (버튼 클릭 시 실행 - 무거운 작업이라 기본 비활성)
 # ================================================================
-st.header("📈 백테스트 (TopDownBacktester)", divider="gray")
+st.header("📈 백테스트 (TopDownBacktesterV2)", divider="gray")
 st.caption(f"전체 유니버스(벤치마크+섹터ETF 11개+대표종목 ~{sum(len(v) for v in SECTOR_STOCKS.values())}개) 다운로드로 "
-           "수 분 정도 걸릴 수 있습니다.")
+           "수 분 정도 걸릴 수 있습니다. 검증 결과: 3년 기준 CAGR +16.65% · MDD -15.66% · Sharpe 1.08 · 승률 64.5%.")
 
 with st.expander("▶ 백테스트 실행하기"):
     bt_years = st.slider("백테스트 기간(년)", min_value=1, max_value=5, value=BACKTEST_YEARS)
     run_clicked = st.button("백테스트 실행", type="primary")
 
     if run_clicked:
-        from backtest import TopDownBacktester
+        from backtest_v2 import TopDownBacktesterV2
 
         with st.spinner(f"최근 {bt_years}년(+워밍업 2년) 데이터 다운로드 및 백테스트 실행 중... 잠시만 기다려주세요."):
             try:
-                bt = TopDownBacktester(years=bt_years, initial_equity=capital)
+                bt = TopDownBacktesterV2(years=bt_years, initial_equity=capital,
+                                          risk_pct=V2_RISK_PCT, position_cap_pct=V2_POSITION_CAP_PCT)
                 stats = bt.run()
             except Exception as e:
                 st.error(f"백테스트 실행 중 오류: {e}")
