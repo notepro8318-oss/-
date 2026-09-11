@@ -44,12 +44,27 @@ from risk import RiskManager
 
 st.set_page_config(page_title="TopDown Quant System", page_icon="📊", layout="wide")
 
-# 섹션 대제목(1️⃣~4️⃣, 백테스트 등 divider가 있는 st.header)만 3pt(=4px) 축소한다.
-# stHeadingWithActionElements는 divider가 붙은 헤더에만 생기는 래퍼라 사이드바 제목과는 겹치지 않는다.
+# 실측 결과 기본 테마 글자 크기가 14~44px까지 7단계로 제각각이라(특히 st.metric 숫자가
+# 36px로 라벨 14px 옆에 툭 튀어나와 보임) 5단계의 일관된 스케일로 재조정한다.
+#   26 타이틀 > 22 섹션헤더/지표값 > 18 카드제목 > 15 본문/라벨/데이터표 > 13 캡션
 st.markdown(
     """
     <style>
-    [data-testid="stHeadingWithActionElements"] h2 { font-size: 32px !important; }
+    h1 { font-size: 26px !important; }
+    [data-testid="stHeadingWithActionElements"] h2 { font-size: 22px !important; }
+    [data-testid="stSidebarContent"] h2 { font-size: 16px !important; }
+    h3 { font-size: 18px !important; }
+    [data-testid="stMetricValue"] { font-size: 22px !important; font-weight: 600 !important; }
+    [data-testid="stMetricLabel"] { font-size: 13px !important; }
+    [data-testid="stCaptionContainer"] p, .stCaption p { font-size: 13px !important; }
+    [data-testid="stMarkdownContainer"] p { font-size: 15px !important; }
+    [data-testid="stExpander"] summary p, [data-testid="stExpander"] summary span { font-size: 15px !important; }
+    [data-testid="stDataFrame"] [role="gridcell"],
+    [data-testid="stDataFrame"] [role="columnheader"] { font-size: 14px !important; }
+    [data-testid="stAlertContentInfo"] p,
+    [data-testid="stAlertContentWarning"] p,
+    [data-testid="stAlertContentSuccess"] p,
+    [data-testid="stAlertContentError"] p { font-size: 15px !important; }
     </style>
     """,
     unsafe_allow_html=True,
