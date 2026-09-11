@@ -105,7 +105,7 @@ class MarketRegimeDetector:
 
 if __name__ == "__main__":
     from data import fetch_ohlcv
-    from config import BENCHMARK
+    from qs_config import BENCHMARK
 
     spy = fetch_ohlcv(BENCHMARK, period="2y")
     detector = MarketRegimeDetector()
