@@ -79,13 +79,15 @@ def load_sector_scores():
 @st.cache_data(ttl=CACHE_TTL, show_spinner=False)
 def load_ranked_candidates(leaders: list, _bench_df):
     candidates_data = {}
+    ticker_sector_map = {}
     for sector in leaders:
         for ticker in SECTOR_STOCKS.get(sector, []):
             df = fetch_ohlcv(ticker, period="3y")
             if not df.empty:
                 candidates_data[ticker] = df
+                ticker_sector_map.setdefault(ticker, sector)
     ranked = ranker.rank_candidates(candidates_data, _bench_df)
-    return ranked, candidates_data
+    return ranked, candidates_data, ticker_sector_map
 
 
 def fmt_pct(v: float) -> str:
@@ -194,7 +196,7 @@ try:
 """)
 
     with st.spinner("주도 섹터 대표 종목 모멘텀 랭킹 계산 중... (수십 개 티커 조회로 다소 시간이 걸릴 수 있습니다)"):
-        ranked, candidates_data = load_ranked_candidates(leaders, bench_df) if leaders else (None, {})
+        ranked, candidates_data, ticker_sector_map = load_ranked_candidates(leaders, bench_df) if leaders else (None, {}, {})
 
     if ranked is None or ranked.empty:
         st.info("랭킹 가능한 종목이 없습니다.")
@@ -205,7 +207,7 @@ try:
         for i, (ticker, row) in enumerate(top_stocks.iterrows()):
             with cols[i % 3]:
                 with st.container(border=True):
-                    st.markdown(f"**{ticker}** · CompositeScore {row['composite_score']:.1f}")
+                    st.markdown(f"**{ticker}** · `{ticker_sector_map.get(ticker, '-')}` · CompositeScore {row['composite_score']:.1f}")
                     st.metric("현재가", f"${row['close']:.2f}")
                     st.caption(f"12-1M모멘텀 {row['mom_121']:+.1%} · 63일 {row['roc_63']:+.1%} · 21일 {row['roc_21']:+.1%}")
                     st.caption(f"52주고점근접도 {row['near_high_ratio']:.2f} · MRS {row['mrs']:+.2f}")
@@ -255,7 +257,7 @@ try:
             stock_value += sizing["position_value"]
 
             with st.container(border=True):
-                st.markdown(f"### ✅ {ticker} · CompositeScore {row['composite_score']:.1f}")
+                st.markdown(f"### ✅ {ticker} · `{ticker_sector_map.get(ticker, '-')}` · CompositeScore {row['composite_score']:.1f}")
                 r1, r2, r3, r4, r5 = st.columns(5)
                 r1.metric("진입가", f"{entry_price:.2f}")
                 r2.metric("손절가", f"{stop:.2f}")

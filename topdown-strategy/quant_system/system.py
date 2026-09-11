@@ -69,11 +69,13 @@ class TopDownQuantSystem:
             return
 
         candidates_data = {}
+        ticker_sector_map = {}
         for sector in leaders:
             for ticker in SECTOR_STOCKS.get(sector, []):
                 df = fetch_ohlcv(ticker, period="3y")
                 if not df.empty:
                     candidates_data[ticker] = df
+                    ticker_sector_map.setdefault(ticker, sector)
 
         ranked = self.ranker.rank_candidates(candidates_data, benchmark_df)
         print(f"\n[Module3-모멘텀랭킹] CompositeScore 상위 {TOP_STOCK_COUNT}종목 (전체 {len(ranked)}개 중)")
@@ -100,7 +102,8 @@ class TopDownQuantSystem:
             if sizing["shares"] <= 0:
                 continue
             stock_used += sizing["position_value"]
-            print(f"  ✅ {ticker:6s} 진입가={entry_price:.2f} 손절={stop:.2f} "
+            sector = ticker_sector_map.get(ticker, "-")
+            print(f"  ✅ {ticker:6s} 섹터={sector:5s} 진입가={entry_price:.2f} 손절={stop:.2f} "
                   f"CompositeScore={row['composite_score']:.1f} MRS={row['mrs']:+.1f} "
                   f"수량={sizing['shares']}주 (투입금액={sizing['position_value']:,.0f})")
 
