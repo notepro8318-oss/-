@@ -104,3 +104,39 @@ MIN_DPS_FLOOR_PCT = 0.01         # DPS<=0 일 때 최소 주당 위험액
 INITIAL_EQUITY = 100_000.0
 COST_BPS = 10                    # 왕복 아님, 편도 10bp (수수료+슬리피지)
 BACKTEST_YEARS = 3
+
+# ------------------------------------------------------------------
+# v2: Cross-Sectional 모멘텀 랭킹 (StockScreener AND필터 대체)
+# ------------------------------------------------------------------
+MOM_12_1_START = 252             # Mom_12_1 = (Close[t-21]-Close[t-252]) / Close[t-252]
+MOM_12_1_END = 21
+ROC_63_LOOKBACK = 63
+ROC_21_LOOKBACK = 21
+
+MOM_WEIGHT_121 = 0.5
+MOM_WEIGHT_ROC63 = 0.3
+MOM_WEIGHT_ROC21 = 0.2
+
+COMPOSITE_WEIGHT_MOMENTUM = 0.4
+COMPOSITE_WEIGHT_NEAR_HIGH = 0.3
+COMPOSITE_WEIGHT_MRS = 0.3
+
+TOP_STOCK_COUNT = 5               # 주간 리밸런싱 시 선정할 목표 종목 수
+
+# ------------------------------------------------------------------
+# v2: 손절/트레일링 개편 (Runner 전략)
+# ------------------------------------------------------------------
+STOP_ATR_MULT_V2 = 2.5            # StopPrice = EntryPrice - 2.5*ATR14 (MA20 하한 없이 순수 ATR)
+TP1_PCT = 0.10                    # +10% 도달 시 1차 분할익절
+TP1_FRACTION = 0.30
+TP2_PCT = 0.20                    # +20% 도달 시 2차 분할익절
+TP2_FRACTION = 0.30
+RUNNER_FRACTION = 0.40            # 잔여 40%는 MA50 이탈 전까지 추세추종
+RUNNER_EXIT_MA_PERIOD = 50
+
+# ------------------------------------------------------------------
+# v2: 유휴자금 폭포수(Waterfall) 배분 - BULL 국면 현금 0% 유지
+# ------------------------------------------------------------------
+IDLE_CASH_FALLBACK_ENABLED = True
+IDLE_CASH_THRESHOLD_PCT = 0.05    # 유휴현금이 자산의 5%를 넘으면 폭포수 배분 실행
+FALLBACK_INDEX_TICKER = "QQQ"

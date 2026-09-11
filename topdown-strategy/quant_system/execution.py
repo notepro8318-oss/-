@@ -15,6 +15,7 @@ from config import (
     BREAKOUT_ATR_PERIOD, BREAKOUT_CANDLE_ATR_RATIO,
     ATR_PERIOD, STOP_INITIAL_PCT, STOP_ATR_MULT, BREAKEVEN_ATR_TRIGGER, TRAIL_ATR_MULT,
     SIDEWAYS_PARTIAL_ATR_TRIGGER, SIDEWAYS_PARTIAL_FRACTION,
+    STOP_ATR_MULT_V2, RUNNER_EXIT_MA_PERIOD,
 )
 
 
@@ -41,6 +42,7 @@ class ExecutionEngine:
         d["VolMA50"] = d["Volume"].rolling(BREAKOUT_VOLUME_MA).mean()
         d["ATR14"] = compute_atr(d, BREAKOUT_ATR_PERIOD)
         d["Box20High"] = d["High"].shift(1).rolling(BREAKOUT_LOOKBACK).max()
+        d["MA50Runner"] = d["Close"].rolling(RUNNER_EXIT_MA_PERIOD).mean()
         return d
 
     def check_trigger_a(self, row: pd.Series, prev_row: pd.Series) -> bool:
@@ -129,3 +131,7 @@ class ExecutionEngine:
     @property
     def partial_exit_fraction(self) -> float:
         return SIDEWAYS_PARTIAL_FRACTION
+
+    def initial_stop_v2(self, entry_price: float, atr: float) -> float:
+        """[v2 Runner 전략] StopPrice = EntryPrice - 2.5*ATR14 (MA20 하한 없이 순수 ATR 기반)."""
+        return entry_price - STOP_ATR_MULT_V2 * atr

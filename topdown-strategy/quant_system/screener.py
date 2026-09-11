@@ -13,6 +13,10 @@ from config import (
     STOCK_MA_SHORT, STOCK_MA_MID, STOCK_MA_LONG,
     MA_LONG_TREND_LOOKBACK, MA_LONG_TREND_MIN_PCT,
     LOOKBACK_52W, NEAR_52W_HIGH_RATIO, ABOVE_52W_LOW_RATIO, MRS_LOOKBACK,
+    MOM_12_1_START, MOM_12_1_END, ROC_63_LOOKBACK, ROC_21_LOOKBACK,
+    MOM_WEIGHT_121, MOM_WEIGHT_ROC63, MOM_WEIGHT_ROC21,
+    COMPOSITE_WEIGHT_MOMENTUM, COMPOSITE_WEIGHT_NEAR_HIGH, COMPOSITE_WEIGHT_MRS,
+    TOP_STOCK_COUNT,
 )
 
 
@@ -96,3 +100,94 @@ class StockScreener:
                 "mrs": float(row["MRS"]),
             }
         return None
+
+
+class MomentumRanker:
+    """[v2] Hard AND 필터 대신 12-1M 모멘텀 + 신고가근접도 + MRS를 가중 합산한
+    Cross-Sectional 랭킹으로 매주 상위 종목을 선정하는 엔진."""
+
+    def __init__(self, top_n: int = TOP_STOCK_COUNT,
+                 mom_start: int = MOM_12_1_START, mom_end: int = MOM_12_1_END,
+                 roc63: int = ROC_63_LOOKBACK, roc21: int = ROC_21_LOOKBACK,
+                 lookback_52w: int = LOOKBACK_52W, mrs_lookback: int = MRS_LOOKBACK) -> None:
+        self.top_n = top_n
+        self.mom_start = mom_start
+        self.mom_end = mom_end
+        self.roc63 = roc63
+        self.roc21 = roc21
+        self.lookback_52w = lookback_52w
+        self.mrs_lookback = mrs_lookback
+
+    def compute_snapshot(self, stock_df: pd.DataFrame, benchmark_df: pd.DataFrame) -> dict | None:
+        """한 종목의 최근 거래일 기준 모멘텀/52주위치/MRS 스냅샷을 계산한다."""
+        df = stock_df.copy()
+        close = df["Close"]
+        if len(close) <= self.mom_start:
+            return None
+
+        mom_121 = (close.shift(self.mom_end) - close.shift(self.mom_start)) / close.shift(self.mom_start)
+        roc_63 = close.pct_change(self.roc63)
+        roc_21 = close.pct_change(self.roc21)
+        high_52w = df["High"].rolling(self.lookback_52w, min_periods=60).max()
+
+        bench_close = benchmark_df["Close"].reindex(df.index).ffill()
+        ratio = close / bench_close
+        mrs = (ratio / ratio.rolling(self.mrs_lookback, min_periods=60).mean() - 1.0) * 100.0
+
+        last = -1
+        if pd.isna(mom_121.iloc[last]) or pd.isna(high_52w.iloc[last]) or pd.isna(mrs.iloc[last]):
+            return None
+
+        return {
+            "close": float(close.iloc[last]),
+            "mom_121": float(mom_121.iloc[last]),
+            "roc_63": float(roc_63.iloc[last]) if not pd.isna(roc_63.iloc[last]) else 0.0,
+            "roc_21": float(roc_21.iloc[last]) if not pd.isna(roc_21.iloc[last]) else 0.0,
+            "near_high_ratio": float(close.iloc[last] / high_52w.iloc[last]),
+            "mrs": float(mrs.iloc[last]),
+        }
+
+    def rank_candidates(self, candidates: dict[str, pd.DataFrame], benchmark_df: pd.DataFrame) -> pd.DataFrame:
+        """후보 종목들의 CompositeScore를 계산해 오름차순(우수 순)으로 정렬한다.
+
+        MomentumScore = 0.5*Rank(Mom_12_1) + 0.3*Rank(ROC_63) + 0.2*Rank(ROC_21)
+        CompositeScore = 0.4*Rank(MomentumScore) + 0.3*Rank(신고가근접도) + 0.3*Rank(MRS)
+        """
+        rows = []
+        for ticker, df in candidates.items():
+            snap = self.compute_snapshot(df, benchmark_df)
+            if snap is None:
+                continue
+            snap["ticker"] = ticker
+            rows.append(snap)
+
+        if not rows:
+            return pd.DataFrame()
+
+        result = pd.DataFrame(rows).set_index("ticker")
+        result["rank_mom121"] = result["mom_121"].rank(ascending=False, method="min")
+        result["rank_roc63"] = result["roc_63"].rank(ascending=False, method="min")
+        result["rank_roc21"] = result["roc_21"].rank(ascending=False, method="min")
+        result["momentum_score"] = (
+            MOM_WEIGHT_121 * result["rank_mom121"]
+            + MOM_WEIGHT_ROC63 * result["rank_roc63"]
+            + MOM_WEIGHT_ROC21 * result["rank_roc21"]
+        )
+
+        result["rank_momentum"] = result["momentum_score"].rank(ascending=True, method="min")
+        result["rank_near_high"] = result["near_high_ratio"].rank(ascending=False, method="min")
+        result["rank_mrs"] = result["mrs"].rank(ascending=False, method="min")
+
+        result["composite_score"] = (
+            COMPOSITE_WEIGHT_MOMENTUM * result["rank_momentum"]
+            + COMPOSITE_WEIGHT_NEAR_HIGH * result["rank_near_high"]
+            + COMPOSITE_WEIGHT_MRS * result["rank_mrs"]
+        )
+        return result.sort_values("composite_score")
+
+    def select_top_stocks(self, candidates: dict[str, pd.DataFrame], benchmark_df: pd.DataFrame) -> list[str]:
+        """CompositeScore 상위 top_n 종목의 티커 리스트를 반환한다."""
+        ranked = self.rank_candidates(candidates, benchmark_df)
+        if ranked.empty:
+            return []
+        return ranked.head(self.top_n).index.tolist()
