@@ -44,6 +44,17 @@ from risk import RiskManager
 
 st.set_page_config(page_title="TopDown Quant System", page_icon="📊", layout="wide")
 
+# 섹션 대제목(1️⃣~4️⃣, 백테스트 등 divider가 있는 st.header)만 3pt(=4px) 축소한다.
+# stHeadingWithActionElements는 divider가 붙은 헤더에만 생기는 래퍼라 사이드바 제목과는 겹치지 않는다.
+st.markdown(
+    """
+    <style>
+    [data-testid="stHeadingWithActionElements"] h2 { font-size: 32px !important; }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 CACHE_TTL = 900  # 15분
 
 # v2 백테스트에서 검증된 최적 사이징
