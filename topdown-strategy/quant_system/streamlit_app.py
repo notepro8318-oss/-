@@ -170,16 +170,28 @@ try:
     else:
         st.info("BEAR 국면이거나 조건을 만족하는 주도 섹터가 없습니다.")
 
-    disp = scored.copy()
-    disp.index.name = "ETF"
-    disp = disp.rename(columns={
-        "roc_5d": "ROC 1주", "roc_21d": "ROC 1개월",
-        "rank_1w": "순위(1주)", "rank_1m": "순위(1개월)", "score": "Score_Rank",
-    })
-    st.dataframe(
-        disp.style.format({"ROC 1주": "{:+.2%}", "ROC 1개월": "{:+.2%}", "Score_Rank": "{:.2f}"}),
-        use_container_width=True,
-    )
+    def _format_score_table(df):
+        disp = df.copy()
+        disp.index.name = "ETF"
+        disp = disp.rename(columns={
+            "roc_5d": "ROC 1주", "roc_21d": "ROC 1개월",
+            "rank_1w": "순위(1주)", "rank_1m": "순위(1개월)", "score": "Score_Rank",
+        })
+        return disp.style.format({"ROC 1주": "{:+.2%}", "ROC 1개월": "{:+.2%}", "Score_Rank": "{:.2f}"})
+
+    if regime == "SIDEWAYS":
+        # SIDEWAYS는 방어적 섹터 4개 안에서만 다시 순위를 매겨 선정하므로,
+        # 전체 11개 기준 표를 그대로 보여주면 "1등인데 왜 안 뽑혔지?"로 오해하기 쉽다.
+        # 실제 선정에 쓰인 것과 동일한(방어적 섹터로 제한된) 순위표를 보여준다.
+        defensive_data = {t: sector_price_data[t] for t in DEFENSIVE_ETFS if t in sector_price_data}
+        scored_defensive = sector_engine.score_sectors(defensive_data)
+        st.caption(f"⚠️ 현재 SIDEWAYS 국면이라 방어적 섹터({', '.join(DEFENSIVE_ETFS)}) 4개 안에서만 "
+                   "다시 순위를 매겨 선정합니다. 아래는 그 4개 기준 실제 선정용 순위표입니다.")
+        st.dataframe(_format_score_table(scored_defensive), use_container_width=True)
+        with st.expander("전체 11개 섹터 기준 순위표 보기 (참고용 — SIDEWAYS 선정에는 미사용)"):
+            st.dataframe(_format_score_table(scored), use_container_width=True)
+    else:
+        st.dataframe(_format_score_table(scored), use_container_width=True)
 
     # ================================================================
     # Module 3: 모멘텀 랭킹 (Cross-Sectional CompositeScore)
