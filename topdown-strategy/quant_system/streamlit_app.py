@@ -129,6 +129,10 @@ def fmt_pct(v: float) -> str:
     return f"{v:+.2f}%" if v is not None else "N/A"
 
 
+def _stockanalysis_url(ticker: str) -> str:
+    return f"https://stockanalysis.com/stocks/{ticker}/"
+
+
 def _fmt_comma(v) -> str:
     """숫자를 3자리마다 콤마를 넣은 문자열로 변환한다 (예: 1000000 -> '1,000,000')."""
     try:
@@ -303,7 +307,8 @@ try:
         for i, (ticker, row) in enumerate(top_stocks.iterrows()):
             with cols[i % 3]:
                 with st.container(border=True):
-                    st.markdown(f"**{ticker}** · `{ticker_sector_map.get(ticker, '-')}` · CompositeScore {row['composite_score']:.1f}")
+                    st.markdown(f"**[{ticker}]({_stockanalysis_url(ticker)})** · "
+                                f"`{ticker_sector_map.get(ticker, '-')}` · CompositeScore {row['composite_score']:.1f}")
                     st.metric("현재가", f"${row['close']:.2f}")
                     st.caption(f"12-1M모멘텀 {row['mom_121']:+.1%} · 63일 {row['roc_63']:+.1%} · 21일 {row['roc_21']:+.1%}")
                     st.caption(f"52주고점근접도 {row['near_high_ratio']:.2f} · MRS {row['mrs']:+.2f}")
@@ -360,7 +365,8 @@ try:
             stock_value += actual_value
 
             with st.container(border=True):
-                st.markdown(f"### ✅ {ticker} · `{ticker_sector_map.get(ticker, '-')}` · CompositeScore {row['composite_score']:.1f}")
+                st.markdown(f"### ✅ [{ticker}]({_stockanalysis_url(ticker)}) · "
+                            f"`{ticker_sector_map.get(ticker, '-')}` · CompositeScore {row['composite_score']:.1f}")
                 r1, r2, r3, r4, r5, r6 = st.columns(6)
                 r1.metric("진입가", f"{entry_price:.2f}")
                 r2.metric("손절가", f"{stop:.2f}")
