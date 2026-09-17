@@ -26,6 +26,7 @@ from datetime import datetime
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import pandas as pd
 import streamlit as st
 
 from qs_config import (
@@ -41,6 +42,10 @@ from qs_sector import SectorRotationEngine
 from screener import MomentumRanker
 from execution import ExecutionEngine
 from risk import RiskManager
+from journal import (
+    load_journal, save_journal, compute_trade_status,
+    STAGE_LABELS, EXIT_REASON_LABELS,
+)
 
 st.set_page_config(page_title="TopDown Quant System", page_icon="📊", layout="wide")
 
@@ -123,6 +128,11 @@ def load_usd_krw_rate():
     if df.empty:
         return None
     return float(df["Close"].iloc[-1])
+
+
+@st.cache_data(ttl=CACHE_TTL, show_spinner=False)
+def load_trade_status(ticker: str, entry_date, entry_price: float):
+    return compute_trade_status(ticker, entry_date, entry_price)
 
 
 def fmt_pct(v: float) -> str:
@@ -388,6 +398,103 @@ try:
 except Exception as e:
     st.error(f"데이터 조회 중 오류가 발생했습니다: {e}\n\n"
              "yfinance가 일시적으로 요청을 제한했을 수 있습니다. 잠시 후 새로고침 해보세요.")
+
+# ================================================================
+# Module 5: 매매일지 (Trade Journal)
+# ================================================================
+st.header("5️⃣ 매매일지 (Trade Journal)", divider="gray")
+st.caption("매매일/매수가/수량을 입력하면 v2 Runner 전략의 매도 시퀀스"
+           "(손절 → TP1 → TP2 → Runner추세추종)를 현재가 기준으로 재현해 지금 어느 단계인지, "
+           "가장 최근 거래일에 새로 발생한 이벤트가 있는지 알려줍니다.")
+with st.expander("📋 매도 시퀀스 상세보기"):
+    st.markdown(f"""
+1. **손절**: 종가가 진입가−{STOP_ATR_MULT_V2}×ATR14(진입일 기준) 이하로 마감 → 전량 손절
+2. **TP1**: 종가가 진입가 대비 **+{TP1_PCT*100:.0f}%** 이상 → 물량의 {TP1_FRACTION*100:.0f}% 익절, 손절가를 본전으로 상향
+3. **TP2**: 종가가 진입가 대비 **+{TP2_PCT*100:.0f}%** 이상 → 추가 {TP2_FRACTION*100:.0f}% 익절, 잔여 물량은 Runner 전환
+4. **Runner**: TP2 이후 잔여 물량은 종가가 **MA{RUNNER_EXIT_MA_PERIOD}** 아래로 마감할 때까지 추세추종 후 전량 청산
+""")
+
+if "journal_df" not in st.session_state:
+    st.session_state["journal_df"] = load_journal()
+
+with st.form("journal_add_form", clear_on_submit=True):
+    jc1, jc2, jc3, jc4, jc5 = st.columns([1, 1, 1, 1, 2])
+    j_ticker = jc1.text_input("종목 티커", placeholder="예: AAPL")
+    j_date = jc2.date_input("매매일", value=datetime.now().date())
+    j_price = jc3.number_input("매수가", min_value=0.0, step=0.01, format="%.2f")
+    j_shares = jc4.number_input("수량", min_value=0, step=1)
+    j_memo = jc5.text_input("메모 (선택)", placeholder="예: 눌림목 진입")
+    submitted = st.form_submit_button("➕ 매매일지에 추가", type="primary")
+
+    if submitted:
+        if not j_ticker.strip() or j_price <= 0 or j_shares <= 0:
+            st.warning("종목 티커, 매수가, 수량을 올바르게 입력해 주세요.")
+        else:
+            new_row = pd.DataFrame([{
+                "ticker": j_ticker.strip().upper(), "entry_date": j_date,
+                "entry_price": j_price, "shares": j_shares, "memo": j_memo.strip(),
+            }])
+            st.session_state["journal_df"] = pd.concat(
+                [st.session_state["journal_df"], new_row], ignore_index=True)
+            save_journal(st.session_state["journal_df"])
+            st.rerun()
+
+journal_df = st.session_state["journal_df"]
+
+if journal_df.empty:
+    st.info("아직 등록된 매매 기록이 없습니다. 위 양식에 매매일/매수가/수량을 입력해 추가해 보세요.")
+else:
+    for i, jrow in journal_df.iterrows():
+        ticker = str(jrow["ticker"])
+        entry_date = jrow["entry_date"]
+        entry_price = float(jrow["entry_price"])
+        shares = int(jrow["shares"])
+        memo = jrow.get("memo", "")
+
+        with st.container(border=True):
+            hc1, hc2 = st.columns([6, 1])
+            hc1.markdown(f"### [{ticker}]({_stockanalysis_url(ticker)}) · 매매일 {entry_date} · "
+                         f"매수가 {entry_price:.2f} · 수량 {shares:,}주" + (f" · _{memo}_" if memo else ""))
+            if hc2.button("🗑️ 삭제", key=f"journal_del_{i}"):
+                st.session_state["journal_df"] = journal_df.drop(index=i).reset_index(drop=True)
+                save_journal(st.session_state["journal_df"])
+                st.rerun()
+
+            with st.spinner(f"{ticker} 매도 시퀀스 계산 중..."):
+                status = load_trade_status(ticker, entry_date, entry_price)
+
+            if "error" in status:
+                st.error(status["error"])
+                continue
+
+            stage = status["stage"]
+            remaining_shares = int(round(shares * status["remaining_frac"]))
+
+            if status["new_event_today"]:
+                st.success(f"🔔 **[{status['last_date'].date()} 신규 알림]** "
+                           f"{status['events'][-1][1]}")
+
+            if stage == "EXITED":
+                st.error(f"**{STAGE_LABELS[stage]}** ({EXIT_REASON_LABELS.get(status['exit_reason'], '-')}, "
+                         f"{status['exit_date'].date()} 종가 {status['exit_price']:.2f})")
+            elif stage == "TP2_DONE":
+                st.success(f"**{STAGE_LABELS[stage]}**")
+            elif stage == "TP1_DONE":
+                st.info(f"**{STAGE_LABELS[stage]}**")
+            else:
+                st.warning(f"**{STAGE_LABELS[stage]}**")
+
+            sc1, sc2, sc3, sc4, sc5 = st.columns(5)
+            sc1.metric("현재가", f"{status['last_close']:.2f}", fmt_pct(status["pnl_pct"]))
+            sc2.metric("현재 손절가", f"{status['current_stop']:.2f}")
+            sc3.metric("TP1 목표가", f"{status['tp1_price']:.2f}")
+            sc4.metric("TP2 목표가", f"{status['tp2_price']:.2f}")
+            sc5.metric("잔여 수량", f"{remaining_shares:,}주" if stage != "EXITED" else "0주")
+
+            if status["events"]:
+                with st.expander("이벤트 이력 보기"):
+                    for ev_date, ev_text in status["events"]:
+                        st.write(f"- **{ev_date.date()}**: {ev_text}")
 
 # ================================================================
 # 백테스트 (버튼 클릭 시 실행 - 무거운 작업이라 기본 비활성)
