@@ -206,6 +206,7 @@ with st.sidebar:
             nj_shares = st.number_input("수량", min_value=0, step=1, key="nj_shares")
             nj_memo = st.text_input("메모 (선택)", placeholder="예: 눌림목 진입", key="nj_memo")
 
+            preview = None
             if nj_ticker.strip() and nj_price > 0:
                 preview = load_preview(nj_ticker.strip().upper(), nj_date, nj_price)
                 if "error" in preview:
@@ -217,6 +218,8 @@ with st.sidebar:
             if st.button("➕ 매매일지에 추가", type="primary", use_container_width=True, key="nj_submit"):
                 if not nj_ticker.strip() or nj_price <= 0 or nj_shares <= 0:
                     st.warning("종목 티커, 매수가, 수량을 올바르게 입력해 주세요.")
+                elif preview is not None and "error" in preview:
+                    pass  # 위 미리보기에 이미 동일한 오류가 표시되어 있으므로 중복 표시하지 않음
                 else:
                     result = add_trade(nj_ticker.strip().upper(), nj_date, nj_price, int(nj_shares), nj_memo)
                     if "error" in result:
