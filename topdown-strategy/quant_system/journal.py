@@ -49,7 +49,8 @@ TRADE_COLUMNS = [
     "initial_shares", "remaining_shares", "initial_stop", "current_stop",
     "atr14_at_entry", "status", "phase", "last_checked_date", "memo",
 ]
-SIGNAL_COLUMNS = ["id", "trade_id", "ticker", "date", "type", "price", "suggested_shares", "confirmed", "note"]
+SIGNAL_COLUMNS = ["id", "trade_id", "ticker", "date", "type", "price", "suggested_shares",
+                   "confirmed", "notified", "note"]
 
 PHASE_LABELS = {
     "STAGE_0": "STAGE_0 · 대기 (TP1 전)",
@@ -112,7 +113,10 @@ def load_signals() -> pd.DataFrame:
     df = _read_df(SIGNALS_REPO_PATH, SIGNALS_LOCAL_PATH, SIGNAL_COLUMNS)
     if not df.empty:
         df["date"] = pd.to_datetime(df["date"]).dt.date
-        df["confirmed"] = df["confirmed"].astype(bool)
+        df["confirmed"] = df["confirmed"].fillna(False).astype(bool)
+        # 기존(스키마 변경 전) 시그널은 notified 컬럼이 없었으므로, 이미 확인(confirmed)된
+        # 시그널은 발송된 것으로 간주하고 나머지만 "미발송"으로 취급해 중복 알림을 막는다.
+        df["notified"] = df["notified"].fillna(df["confirmed"]).astype(bool)
     return df
 
 
@@ -205,7 +209,7 @@ def _make_signal(trade_id: str, ticker: str, sig_date, sig_type: str, price: flo
         "id": uuid.uuid4().hex[:12], "trade_id": trade_id, "ticker": ticker,
         "date": sig_date.date() if hasattr(sig_date, "date") else sig_date,
         "type": sig_type, "price": round(float(price), 4),
-        "suggested_shares": int(suggested_shares), "confirmed": False,
+        "suggested_shares": int(suggested_shares), "confirmed": False, "notified": False,
         "note": SIGNAL_LABELS.get(sig_type, sig_type),
     }
 
@@ -338,6 +342,29 @@ def confirm_signal(signal_id: str) -> None:
             remaining = max(0, int(trades_df.at[idx, "remaining_shares"]) - int(sig["suggested_shares"]))
             trades_df.at[idx, "remaining_shares"] = remaining
             save_trades(trades_df, f"Confirm fill: {sig['ticker']} {sig['type']}")
+
+
+def get_unnotified_signals() -> pd.DataFrame:
+    """아직 알림(Telegram 등)을 보내지 않은 시그널을 반환한다.
+
+    시그널 감지(scan_open_trades)는 대시보드의 수동 새로고침이나 스케줄러 어느 쪽에서
+    먼저 실행되든 동일하게 상태를 소비하므로, "방금 감지된 시그널"만 알림을 보내면
+    다른 프로세스가 먼저 감지해버린 시그널은 영영 알림을 못 받는다. notified 플래그를
+    별도로 두어, 언제 감지됐든 아직 발송 안 된 시그널을 스케줄러가 항상 찾아내게 한다.
+    """
+    signals_df = load_signals()
+    if signals_df.empty:
+        return signals_df
+    return signals_df[~signals_df["notified"]]
+
+
+def mark_notified(signal_ids: list[str]) -> None:
+    """주어진 시그널들을 발송 완료(notified=True) 처리한다."""
+    if not signal_ids:
+        return
+    signals_df = load_signals()
+    signals_df.loc[signals_df["id"].isin(signal_ids), "notified"] = True
+    save_signals(signals_df, f"Mark {len(signal_ids)} signal(s) as notified")
 
 
 # ------------------------------------------------------------------
