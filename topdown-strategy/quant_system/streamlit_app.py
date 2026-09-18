@@ -332,6 +332,78 @@ st.title("📊 TopDownQuantSystem — 모멘텀 랭킹 + Runner 대시보드")
 st.caption("MarketRegimeDetector → SectorRotationEngine → MomentumRanker → ExecutionEngine/RiskManager "
            "순서로 실시간 매수 후보를 계산합니다. (12-1M 모멘텀 · 유휴자금 폭포수배분 · ATR손절/분할익절/Runner추세추종)")
 
+# ================================================================
+# 매매일지 현황 (사이드바에서 등록한 포지션의 매수/매도 정보를 메인 화면에 표시)
+# ================================================================
+st.header("📓 매매일지 현황", divider="gray")
+st.caption("사이드바 '매매일지' 탭에서 등록/조회한 포지션의 매수·매도 정보입니다. "
+           "🔔 표시는 확인 대기 중인 신규 시그널입니다.")
+
+if trades_df.empty:
+    st.info("아직 등록된 포지션이 없습니다. 좌측 사이드바 '📓 매매일지' 탭에서 종목을 등록해 보세요.")
+else:
+    if open_trades.empty:
+        st.info("현재 보유(OPEN) 포지션이 없습니다.")
+    for _, trow in open_trades.iterrows():
+        trade_id = trow["id"]
+        ticker = trow["ticker"]
+        pending = signals_df[(signals_df["trade_id"] == trade_id) & (~signals_df["confirmed"])] \
+            if not signals_df.empty else signals_df
+
+        with st.container(border=True):
+            phase_emoji = {"STAGE_0": "🟡", "STAGE_1": "🔵", "STAGE_2": "🟢"}.get(trow["phase"], "")
+            bell = " 🔔" if len(pending) > 0 else ""
+            hcol1, hcol2 = st.columns([6, 1])
+            hcol1.markdown(f"### {phase_emoji} [{ticker}]({_stockanalysis_url(ticker)}) · "
+                            f"{trow['entry_date']} 진입{bell}" +
+                            (f" · _{trow['memo']}_" if trow.get("memo") else ""))
+            if hcol2.button("🗑️ 삭제", key=f"main_del_{trade_id}"):
+                delete_trade(trade_id)
+                st.cache_data.clear()
+                st.rerun()
+
+            st.caption(PHASE_LABELS.get(trow["phase"], trow["phase"]))
+
+            metrics = load_dashboard_metrics(ticker, float(trow["entry_price"]), float(trow["initial_stop"]),
+                                              float(trow["current_stop"]), trow["phase"])
+            m1, m2, m3, m4, m5, m6 = st.columns(6)
+            m1.metric("매수가", f"{trow['entry_price']:.2f}")
+            m2.metric("현재가", f"{metrics['last_close']:.2f}" if "error" not in metrics else "N/A")
+            m3.metric("손절가", f"{trow['current_stop']:.2f}",
+                      fmt_pct(metrics.get("dist_to_stop_pct")) if "error" not in metrics else None)
+            if "error" not in metrics and metrics["target_price"] is not None:
+                m4.metric(f"{metrics['target_label']} 목표가", f"{metrics['target_price']:.2f}",
+                          fmt_pct(metrics["dist_to_target_pct"]))
+            else:
+                m4.metric("목표가", "Runner(MA50)")
+            m5.metric("잔여 수량", f"{int(trow['remaining_shares']):,} / {int(trow['initial_shares']):,}주")
+            m6.metric("R배수", f"{metrics['r_multiple']:+.2f}R" if "error" not in metrics else "N/A")
+
+            if "error" in metrics:
+                st.error(metrics["error"])
+
+            if len(pending) > 0:
+                for _, sig in pending.iterrows():
+                    scol1, scol2 = st.columns([4, 1])
+                    scol1.warning(f"🔔 **{SIGNAL_LABELS.get(sig['type'], sig['type'])}** — "
+                                  f"{sig['date']} 종가 {sig['price']:.2f}, 매도 제안 수량 {int(sig['suggested_shares']):,}주")
+                    if scol2.button("✅ 체결 확인", key=f"main_confirm_{sig['id']}", use_container_width=True):
+                        confirm_signal(sig["id"])
+                        st.cache_data.clear()
+                        st.rerun()
+
+    if not closed_trades.empty:
+        with st.expander(f"⚫ 종료된 포지션 ({len(closed_trades)}건)"):
+            hist = closed_trades.copy()
+            hist_disp = hist.rename(columns={
+                "ticker": "티커", "entry_date": "매매일", "entry_price": "매수가",
+                "initial_shares": "최초수량", "phase": "종료단계", "memo": "메모",
+            })
+            st.dataframe(
+                hist_disp[["티커", "매매일", "매수가", "최초수량", "종료단계", "메모"]],
+                use_container_width=True,
+            )
+
 try:
     # ================================================================
     # Module 1: 시장 국면 판정
