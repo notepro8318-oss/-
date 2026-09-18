@@ -365,65 +365,93 @@ st.caption("사이드바 '매매일지' 탭에서 등록/조회한 포지션의 
 if trades_df.empty:
     st.info("아직 등록된 포지션이 없습니다. 좌측 사이드바 '📓 매매일지' 탭에서 종목을 등록해 보세요.")
 else:
-    if open_trades.empty:
-        st.info("현재 보유(OPEN) 포지션이 없습니다.")
-    for _, trow in open_trades.iterrows():
-        trade_id = trow["id"]
-        ticker = trow["ticker"]
-        pending = signals_df[(signals_df["trade_id"] == trade_id) & (~signals_df["confirmed"])] \
-            if not signals_df.empty else signals_df
+    tab_open, tab_closed, tab_history = st.tabs([
+        f"🟢 진행중 ({len(open_trades)})",
+        f"⚫ 종료 ({len(closed_trades)})",
+        f"📜 History ({len(archived_trades)})",
+    ])
 
-        with st.container(border=True):
-            phase_emoji = {"STAGE_0": "🟡", "STAGE_1": "🔵", "STAGE_2": "🟢"}.get(trow["phase"], "")
-            bell = " 🔔" if len(pending) > 0 else ""
-            hcol1, hcol2 = st.columns([6, 1])
-            hcol1.markdown(f"### {phase_emoji} [{ticker}]({_stockanalysis_url(ticker)}) · "
-                            f"{trow['entry_date']} 진입{bell}" +
-                            (f" · _{trow['memo']}_" if trow.get("memo") else ""))
-            if hcol2.button("📁 기록/삭제", key=f"main_del_{trade_id}"):
-                archive_trade(trade_id)
+    with tab_open:
+        if open_trades.empty:
+            st.info("현재 보유(OPEN) 포지션이 없습니다.")
+        for _, trow in open_trades.iterrows():
+            trade_id = trow["id"]
+            ticker = trow["ticker"]
+            pending = signals_df[(signals_df["trade_id"] == trade_id) & (~signals_df["confirmed"])] \
+                if not signals_df.empty else signals_df
+
+            with st.container(border=True):
+                phase_emoji = {"STAGE_0": "🟡", "STAGE_1": "🔵", "STAGE_2": "🟢"}.get(trow["phase"], "")
+                bell = " 🔔" if len(pending) > 0 else ""
+                hcol1, hcol2 = st.columns([6, 1])
+                hcol1.markdown(f"### {phase_emoji} [{ticker}]({_stockanalysis_url(ticker)}) · "
+                                f"{trow['entry_date']} 진입{bell}" +
+                                (f" · _{trow['memo']}_" if trow.get("memo") else ""))
+                if hcol2.button("📁 기록/삭제", key=f"main_del_{trade_id}"):
+                    archive_trade(trade_id)
+                    st.cache_data.clear()
+                    st.rerun()
+
+                st.caption(PHASE_LABELS.get(trow["phase"], trow["phase"]))
+
+                metrics = load_dashboard_metrics(ticker, float(trow["entry_price"]), float(trow["initial_stop"]),
+                                                  float(trow["current_stop"]), trow["phase"])
+                m1, m2, m3, m4, m5, m6 = st.columns(6)
+                m1.metric("매수가", f"{trow['entry_price']:.2f}")
+                m2.metric("현재가", f"{metrics['last_close']:.2f}" if "error" not in metrics else "N/A")
+                m3.metric("손절가", f"{trow['current_stop']:.2f}",
+                          fmt_pct(metrics.get("dist_to_stop_pct")) if "error" not in metrics else None)
+                if "error" not in metrics and metrics["target_price"] is not None:
+                    m4.metric(f"{metrics['target_label']} 목표가", f"{metrics['target_price']:.2f}",
+                              fmt_pct(metrics["dist_to_target_pct"]))
+                else:
+                    m4.metric("목표가", "Runner(MA50)")
+                m5.metric("잔여 수량", f"{int(trow['remaining_shares']):,} / {int(trow['initial_shares']):,}주")
+                m6.metric("R배수", f"{metrics['r_multiple']:+.2f}R" if "error" not in metrics else "N/A")
+
+                if "error" in metrics:
+                    st.error(metrics["error"])
+
+                if len(pending) > 0:
+                    for _, sig in pending.iterrows():
+                        scol1, scol2 = st.columns([4, 1])
+                        scol1.warning(f"🔔 **{SIGNAL_LABELS.get(sig['type'], sig['type'])}** — "
+                                      f"{sig['date']} 종가 {sig['price']:.2f}, 매도 제안 수량 {int(sig['suggested_shares']):,}주")
+                        if scol2.button("✅ 체결 확인", key=f"main_confirm_{sig['id']}", use_container_width=True):
+                            confirm_signal(sig["id"])
+                            st.cache_data.clear()
+                            st.rerun()
+
+    with tab_closed:
+        if closed_trades.empty:
+            st.info("종료된 포지션이 없습니다.")
+        for _, trow in closed_trades.iterrows():
+            ccol1, ccol2 = st.columns([5, 1])
+            ccol1.write(f"{trow['ticker']} · {trow['entry_date']} 진입 {trow['entry_price']:.2f} · "
+                        f"{PHASE_LABELS.get(trow['phase'], trow['phase'])}" +
+                        (f" · {trow['memo']}" if trow.get("memo") else ""))
+            if ccol2.button("📁 기록/삭제", key=f"main_del_closed_{trow['id']}", use_container_width=True):
+                archive_trade(trow["id"])
                 st.cache_data.clear()
                 st.rerun()
 
-            st.caption(PHASE_LABELS.get(trow["phase"], trow["phase"]))
-
-            metrics = load_dashboard_metrics(ticker, float(trow["entry_price"]), float(trow["initial_stop"]),
-                                              float(trow["current_stop"]), trow["phase"])
-            m1, m2, m3, m4, m5, m6 = st.columns(6)
-            m1.metric("매수가", f"{trow['entry_price']:.2f}")
-            m2.metric("현재가", f"{metrics['last_close']:.2f}" if "error" not in metrics else "N/A")
-            m3.metric("손절가", f"{trow['current_stop']:.2f}",
-                      fmt_pct(metrics.get("dist_to_stop_pct")) if "error" not in metrics else None)
-            if "error" not in metrics and metrics["target_price"] is not None:
-                m4.metric(f"{metrics['target_label']} 목표가", f"{metrics['target_price']:.2f}",
-                          fmt_pct(metrics["dist_to_target_pct"]))
-            else:
-                m4.metric("목표가", "Runner(MA50)")
-            m5.metric("잔여 수량", f"{int(trow['remaining_shares']):,} / {int(trow['initial_shares']):,}주")
-            m6.metric("R배수", f"{metrics['r_multiple']:+.2f}R" if "error" not in metrics else "N/A")
-
-            if "error" in metrics:
-                st.error(metrics["error"])
-
-            if len(pending) > 0:
-                for _, sig in pending.iterrows():
-                    scol1, scol2 = st.columns([4, 1])
-                    scol1.warning(f"🔔 **{SIGNAL_LABELS.get(sig['type'], sig['type'])}** — "
-                                  f"{sig['date']} 종가 {sig['price']:.2f}, 매도 제안 수량 {int(sig['suggested_shares']):,}주")
-                    if scol2.button("✅ 체결 확인", key=f"main_confirm_{sig['id']}", use_container_width=True):
-                        confirm_signal(sig["id"])
-                        st.cache_data.clear()
-                        st.rerun()
-
-    if not closed_trades.empty:
-        with st.expander(f"⚫ 종료된 포지션 ({len(closed_trades)}건)"):
-            for _, trow in closed_trades.iterrows():
-                ccol1, ccol2 = st.columns([5, 1])
-                ccol1.write(f"{trow['ticker']} · {trow['entry_date']} 진입 {trow['entry_price']:.2f} · "
-                            f"{PHASE_LABELS.get(trow['phase'], trow['phase'])}" +
-                            (f" · {trow['memo']}" if trow.get("memo") else ""))
-                if ccol2.button("📁 기록/삭제", key=f"main_del_closed_{trow['id']}", use_container_width=True):
-                    archive_trade(trow["id"])
+    with tab_history:
+        st.caption("'기록/삭제'로 옮긴 포지션입니다. 시그널 추적 대상에서 제외됩니다.")
+        if archived_trades.empty:
+            st.info("History에 저장된 포지션이 없습니다.")
+        for _, trow in archived_trades.iterrows():
+            with st.container(border=True):
+                hcol1, hcol2, hcol3 = st.columns([5, 1, 1])
+                hcol1.markdown(f"**{trow['ticker']}** · {trow['entry_date']} 진입 {trow['entry_price']:.2f} · "
+                               f"최초 {int(trow['initial_shares']):,}주 · "
+                               f"{PHASE_LABELS.get(trow['phase'], trow['phase'])} ({trow['status']})" +
+                               (f" · _{trow['memo']}_" if trow.get("memo") else ""))
+                if hcol2.button("♻️ 복원", key=f"main_restore_{trow['id']}", use_container_width=True):
+                    restore_trade(trow["id"])
+                    st.cache_data.clear()
+                    st.rerun()
+                if hcol3.button("🗑️ 완전 삭제", key=f"main_harddel_{trow['id']}", use_container_width=True):
+                    delete_trade(trow["id"])
                     st.cache_data.clear()
                     st.rerun()
 
