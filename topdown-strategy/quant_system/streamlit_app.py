@@ -44,7 +44,7 @@ from execution import ExecutionEngine
 from risk import RiskManager
 from journal import (
     load_trades, load_signals, preview_entry, add_trade, delete_trade,
-    archive_trade, restore_trade,
+    archive_trade, restore_trade, set_exit_price,
     scan_open_trades, confirm_signal, get_dashboard_metrics,
     PHASE_LABELS, SIGNAL_LABELS,
 )
@@ -241,8 +241,23 @@ with st.sidebar:
                 st.caption("기록/삭제로 옮긴 포지션이 여기에 표시됩니다.")
             else:
                 for _, hrow in archived_trades.iterrows():
-                    st.caption(f"{hrow['ticker']} · {hrow['entry_date']} 진입 {hrow['entry_price']:.2f} · "
-                               f"{PHASE_LABELS.get(hrow['phase'], hrow['phase'])} ({hrow['status']})")
+                    st.caption(f"{hrow['ticker']} · 매수일 {hrow['entry_date']} · 매수가 {hrow['entry_price']:.2f} · "
+                               f"{int(hrow['initial_shares']):,}주")
+
+                    has_exit = pd.notna(hrow["exit_price"])
+                    new_exit = st.number_input(
+                        "매도가격", min_value=0.0, step=0.01, format="%.2f",
+                        value=float(hrow["exit_price"]) if has_exit else 0.0,
+                        key=f"exit_price_input_{hrow['id']}",
+                    )
+                    if st.button("💾 매도가격 저장", key=f"exit_price_save_{hrow['id']}", use_container_width=True):
+                        set_exit_price(hrow["id"], new_exit)
+                        st.cache_data.clear()
+                        st.rerun()
+                    if has_exit and hrow["entry_price"]:
+                        pct = (float(hrow["exit_price"]) / hrow["entry_price"] - 1) * 100
+                        st.write(f"증감률: **{fmt_pct(pct)}**")
+
                     hc1, hc2 = st.columns(2)
                     if hc1.button("♻️ 복원", key=f"restore_{hrow['id']}", use_container_width=True):
                         restore_trade(hrow["id"])
@@ -442,8 +457,8 @@ else:
         for _, trow in archived_trades.iterrows():
             with st.container(border=True):
                 hcol1, hcol2, hcol3 = st.columns([5, 1, 1])
-                hcol1.markdown(f"**{trow['ticker']}** · {trow['entry_date']} 진입 {trow['entry_price']:.2f} · "
-                               f"최초 {int(trow['initial_shares']):,}주 · "
+                hcol1.markdown(f"**{trow['ticker']}** · 매수일 {trow['entry_date']} · 매수가 {trow['entry_price']:.2f} · "
+                               f"{int(trow['initial_shares']):,}주 · "
                                f"{PHASE_LABELS.get(trow['phase'], trow['phase'])} ({trow['status']})" +
                                (f" · _{trow['memo']}_" if trow.get("memo") else ""))
                 if hcol2.button("♻️ 복원", key=f"main_restore_{trow['id']}", use_container_width=True):
@@ -454,6 +469,21 @@ else:
                     delete_trade(trow["id"])
                     st.cache_data.clear()
                     st.rerun()
+
+                has_exit = pd.notna(trow["exit_price"])
+                ecol1, ecol2, ecol3 = st.columns([2, 1, 2])
+                new_exit = ecol1.number_input(
+                    "매도가격", min_value=0.0, step=0.01, format="%.2f",
+                    value=float(trow["exit_price"]) if has_exit else 0.0,
+                    key=f"main_exit_price_input_{trow['id']}",
+                )
+                if ecol2.button("💾 저장", key=f"main_exit_price_save_{trow['id']}", use_container_width=True):
+                    set_exit_price(trow["id"], new_exit)
+                    st.cache_data.clear()
+                    st.rerun()
+                if has_exit and trow["entry_price"]:
+                    pct = (float(trow["exit_price"]) / trow["entry_price"] - 1) * 100
+                    ecol3.metric("증감률", fmt_pct(pct))
 
 try:
     # ================================================================

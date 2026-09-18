@@ -48,6 +48,7 @@ TRADE_COLUMNS = [
     "id", "ticker", "asset_name", "entry_date", "entry_price",
     "initial_shares", "remaining_shares", "initial_stop", "current_stop",
     "atr14_at_entry", "status", "phase", "last_checked_date", "memo", "archived",
+    "exit_price",
 ]
 SIGNAL_COLUMNS = ["id", "trade_id", "ticker", "date", "type", "price", "suggested_shares",
                    "confirmed", "notified", "note"]
@@ -103,6 +104,7 @@ def load_trades() -> pd.DataFrame:
                     "initial_stop", "current_stop", "atr14_at_entry"]:
             df[col] = pd.to_numeric(df[col])
         df["archived"] = df["archived"].fillna(False).astype(bool)
+        df["exit_price"] = pd.to_numeric(df["exit_price"], errors="coerce")
     return df
 
 
@@ -186,6 +188,7 @@ def add_trade(ticker: str, entry_date, entry_price: float, shares: int,
         "last_checked_date": entry_idx.date() - pd.Timedelta(days=1),
         "memo": memo.strip(),
         "archived": False,
+        "exit_price": None,
     }
     new_df = pd.DataFrame([new_row])
     trades_df = new_df if trades_df.empty else pd.concat([trades_df, new_df], ignore_index=True)
@@ -205,6 +208,13 @@ def restore_trade(trade_id: str) -> None:
     trades_df = load_trades()
     trades_df.loc[trades_df["id"] == trade_id, "archived"] = False
     save_trades(trades_df, f"Restore trade {trade_id}")
+
+
+def set_exit_price(trade_id: str, exit_price: float) -> None:
+    """History에서 사용자가 직접 입력한 매도가격을 저장한다 (매수가 대비 증감률 계산용)."""
+    trades_df = load_trades()
+    trades_df.loc[trades_df["id"] == trade_id, "exit_price"] = exit_price
+    save_trades(trades_df, f"Set exit price for trade {trade_id}")
 
 
 def delete_trade(trade_id: str) -> None:
