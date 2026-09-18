@@ -1,0 +1,50 @@
+{
+  "date": "2026-09-17",
+  "regime": "SIDEWAYS",
+  "leaders": [
+    "XLV",
+    "XLP"
+  ],
+  "candidates": [
+    {
+      "ticker": "TMO",
+      "sector": "XLV",
+      "entry_price": 658.32,
+      "stop": 619.65,
+      "weight_pct": 26.0,
+      "shares": 15
+    },
+    {
+      "ticker": "MRK",
+      "sector": "XLV",
+      "entry_price": 147.15,
+      "stop": 139.86,
+      "weight_pct": 22.3,
+      "shares": 60
+    },
+    {
+      "ticker": "TGT",
+      "sector": "XLP",
+      "entry_price": 159.83,
+      "stop": 150.46,
+      "weight_pct": 19.5,
+      "shares": 48
+    },
+    {
+      "ticker": "ABBV",
+      "sector": "XLV",
+      "entry_price": 264.02,
+      "stop": 250.14,
+      "weight_pct": 16.9,
+      "shares": 25
+    },
+    {
+      "ticker": "JNJ",
+      "sector": "XLV",
+      "entry_price": 270.22,
+      "stop": 257.12,
+      "weight_pct": 15.2,
+      "shares": 22
+    }
+  ]
+}
