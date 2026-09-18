@@ -1,0 +1,2 @@
+id,ticker,asset_name,entry_date,entry_price,initial_shares,remaining_shares,initial_stop,current_stop,atr14_at_entry,status,phase,last_checked_date,memo
+956ef5759b68,TGT,,2026-09-17,155.5,1,1,146.1267820085798,146.1267820085798,3.7492871965680803,OPEN,STAGE_0,2026-09-16,
