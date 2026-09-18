@@ -44,6 +44,7 @@ from execution import ExecutionEngine
 from risk import RiskManager
 from journal import (
     load_trades, load_signals, preview_entry, add_trade, delete_trade,
+    archive_trade, restore_trade,
     scan_open_trades, confirm_signal, get_dashboard_metrics,
     PHASE_LABELS, SIGNAL_LABELS,
 )
@@ -228,6 +229,30 @@ with st.sidebar:
                         st.cache_data.clear()
                         st.rerun()
 
+        trades_df = load_trades()
+        signals_df = load_signals()
+        active_trades = trades_df[~trades_df["archived"]] if not trades_df.empty else trades_df
+        open_trades = active_trades[active_trades["status"] == "OPEN"] if not active_trades.empty else active_trades
+        closed_trades = active_trades[active_trades["status"] == "CLOSED"] if not active_trades.empty else active_trades
+        archived_trades = trades_df[trades_df["archived"]] if not trades_df.empty else trades_df
+
+        with st.expander(f"📜 History ({len(archived_trades)}건)"):
+            if archived_trades.empty:
+                st.caption("기록/삭제로 옮긴 포지션이 여기에 표시됩니다.")
+            else:
+                for _, hrow in archived_trades.iterrows():
+                    st.caption(f"{hrow['ticker']} · {hrow['entry_date']} 진입 {hrow['entry_price']:.2f} · "
+                               f"{PHASE_LABELS.get(hrow['phase'], hrow['phase'])} ({hrow['status']})")
+                    hc1, hc2 = st.columns(2)
+                    if hc1.button("♻️ 복원", key=f"restore_{hrow['id']}", use_container_width=True):
+                        restore_trade(hrow["id"])
+                        st.cache_data.clear()
+                        st.rerun()
+                    if hc2.button("🗑️ 완전 삭제", key=f"harddel_{hrow['id']}", use_container_width=True):
+                        delete_trade(hrow["id"])
+                        st.cache_data.clear()
+                        st.rerun()
+
         if st.button("🔄 시그널 확인", use_container_width=True):
             with st.spinner("전체 OPEN 포지션 스캔 중..."):
                 new_signals = scan_open_trades()
@@ -237,11 +262,6 @@ with st.sidebar:
             else:
                 st.info("신규 시그널 없음")
             st.rerun()
-
-        trades_df = load_trades()
-        signals_df = load_signals()
-        open_trades = trades_df[trades_df["status"] == "OPEN"] if not trades_df.empty else trades_df
-        closed_trades = trades_df[trades_df["status"] == "CLOSED"] if not trades_df.empty else trades_df
 
         if trades_df.empty:
             st.caption("아직 등록된 포지션이 없습니다.")
@@ -260,8 +280,8 @@ with st.sidebar:
                            f"잔여 {int(trow['remaining_shares']):,}주" +
                            (f" · {trow['memo']}" if trow.get("memo") else ""))
 
-                if st.button("🗑️ 포지션 삭제", key=f"del_{trade_id}", use_container_width=True):
-                    delete_trade(trade_id)
+                if st.button("📁 기록/삭제", key=f"del_{trade_id}", use_container_width=True):
+                    archive_trade(trade_id)
                     st.cache_data.clear()
                     st.rerun()
 
@@ -293,8 +313,8 @@ with st.sidebar:
                 for _, trow in closed_trades.iterrows():
                     st.caption(f"{trow['ticker']} · {trow['entry_date']} 진입 {trow['entry_price']:.2f} · "
                                f"{PHASE_LABELS.get(trow['phase'], trow['phase'])}")
-                    if st.button("🗑️ 삭제", key=f"del_closed_{trow['id']}"):
-                        delete_trade(trow["id"])
+                    if st.button("📁 기록/삭제", key=f"del_closed_{trow['id']}"):
+                        archive_trade(trow["id"])
                         st.cache_data.clear()
                         st.rerun()
 
@@ -360,8 +380,8 @@ else:
             hcol1.markdown(f"### {phase_emoji} [{ticker}]({_stockanalysis_url(ticker)}) · "
                             f"{trow['entry_date']} 진입{bell}" +
                             (f" · _{trow['memo']}_" if trow.get("memo") else ""))
-            if hcol2.button("🗑️ 삭제", key=f"main_del_{trade_id}"):
-                delete_trade(trade_id)
+            if hcol2.button("📁 기록/삭제", key=f"main_del_{trade_id}"):
+                archive_trade(trade_id)
                 st.cache_data.clear()
                 st.rerun()
 
@@ -397,15 +417,15 @@ else:
 
     if not closed_trades.empty:
         with st.expander(f"⚫ 종료된 포지션 ({len(closed_trades)}건)"):
-            hist = closed_trades.copy()
-            hist_disp = hist.rename(columns={
-                "ticker": "티커", "entry_date": "매매일", "entry_price": "매수가",
-                "initial_shares": "최초수량", "phase": "종료단계", "memo": "메모",
-            })
-            st.dataframe(
-                hist_disp[["티커", "매매일", "매수가", "최초수량", "종료단계", "메모"]],
-                use_container_width=True,
-            )
+            for _, trow in closed_trades.iterrows():
+                ccol1, ccol2 = st.columns([5, 1])
+                ccol1.write(f"{trow['ticker']} · {trow['entry_date']} 진입 {trow['entry_price']:.2f} · "
+                            f"{PHASE_LABELS.get(trow['phase'], trow['phase'])}" +
+                            (f" · {trow['memo']}" if trow.get("memo") else ""))
+                if ccol2.button("📁 기록/삭제", key=f"main_del_closed_{trow['id']}", use_container_width=True):
+                    archive_trade(trow["id"])
+                    st.cache_data.clear()
+                    st.rerun()
 
 try:
     # ================================================================

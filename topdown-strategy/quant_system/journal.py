@@ -47,7 +47,7 @@ SIGNALS_LOCAL_PATH = os.path.join(_LOCAL_DIR, "trade_signals.csv")
 TRADE_COLUMNS = [
     "id", "ticker", "asset_name", "entry_date", "entry_price",
     "initial_shares", "remaining_shares", "initial_stop", "current_stop",
-    "atr14_at_entry", "status", "phase", "last_checked_date", "memo",
+    "atr14_at_entry", "status", "phase", "last_checked_date", "memo", "archived",
 ]
 SIGNAL_COLUMNS = ["id", "trade_id", "ticker", "date", "type", "price", "suggested_shares",
                    "confirmed", "notified", "note"]
@@ -102,6 +102,7 @@ def load_trades() -> pd.DataFrame:
         for col in ["entry_price", "initial_shares", "remaining_shares",
                     "initial_stop", "current_stop", "atr14_at_entry"]:
             df[col] = pd.to_numeric(df[col])
+        df["archived"] = df["archived"].fillna(False).astype(bool)
     return df
 
 
@@ -184,6 +185,7 @@ def add_trade(ticker: str, entry_date, entry_price: float, shares: int,
         # 등록일 하루 전부터 스캔을 시작해 진입일 당일 트리거도 놓치지 않는다.
         "last_checked_date": entry_idx.date() - pd.Timedelta(days=1),
         "memo": memo.strip(),
+        "archived": False,
     }
     new_df = pd.DataFrame([new_row])
     trades_df = new_df if trades_df.empty else pd.concat([trades_df, new_df], ignore_index=True)
@@ -191,7 +193,22 @@ def add_trade(ticker: str, entry_date, entry_price: float, shares: int,
     return {"ok": True, "trade": new_row}
 
 
+def archive_trade(trade_id: str) -> None:
+    """포지션을 '매매일지 현황'에서 History로 옮긴다 (데이터는 보존, 추적/스캔 대상에서 제외)."""
+    trades_df = load_trades()
+    trades_df.loc[trades_df["id"] == trade_id, "archived"] = True
+    save_trades(trades_df, f"Archive trade {trade_id}")
+
+
+def restore_trade(trade_id: str) -> None:
+    """History에서 '매매일지 현황'으로 다시 복원한다."""
+    trades_df = load_trades()
+    trades_df.loc[trades_df["id"] == trade_id, "archived"] = False
+    save_trades(trades_df, f"Restore trade {trade_id}")
+
+
 def delete_trade(trade_id: str) -> None:
+    """포지션과 관련 시그널을 완전히 삭제한다 (History에서 영구 삭제할 때 사용)."""
     trades_df = load_trades()
     trades_df = trades_df[trades_df["id"] != trade_id].reset_index(drop=True)
     save_trades(trades_df, f"Delete trade {trade_id}")
@@ -287,7 +304,7 @@ def scan_open_trades() -> list[dict]:
     any_trade_changed = False
 
     for i, row in trades_df.iterrows():
-        if row["status"] != "OPEN":
+        if row["status"] != "OPEN" or row.get("archived", False):
             continue
         df = fetch_ohlcv(row["ticker"], period="5y")
         if df.empty:
