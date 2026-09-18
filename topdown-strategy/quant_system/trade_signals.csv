@@ -1,3 +1,1 @@
 id,trade_id,ticker,date,type,price,suggested_shares,confirmed,notified,note
-5f11dfaa0351,85ee0e14f551,TGT,2026-09-17,TP1,110.0,15,True,True,TP1 익절 (+10%)
-907ed4f5df32,85ee0e14f551,TGT,2026-09-17,TP2,120.0,15,False,True,TP2 익절 (+20%)
