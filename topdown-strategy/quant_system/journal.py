@@ -211,7 +211,11 @@ def _make_signal(trade_id: str, ticker: str, sig_date, sig_type: str, price: flo
 
 
 def _simulate_day(trade: dict, day_date, row: pd.Series) -> tuple[dict, list[dict]]:
-    """하루치 High/Low/Close로 현재 phase의 트리거를 검사해 (갱신된 trade, 신규시그널들)을 반환."""
+    """하루치 High/Low/Close로 현재 phase의 트리거를 검사해 (갱신된 trade, 신규시그널들)을 반환.
+
+    급등/갭상승 등으로 하루 만에 여러 단계(TP1->TP2, 심지어 Runner까지)를 동시에
+    통과할 수 있으므로, 같은 날짜 안에서는 더 이상 전이가 없을 때까지 계속 검사한다.
+    """
     signals: list[dict] = []
     if trade["status"] != "OPEN":
         return trade, signals
@@ -220,40 +224,50 @@ def _simulate_day(trade: dict, day_date, row: pd.Series) -> tuple[dict, list[dic
     initial_shares = trade["initial_shares"]
     high, low, close = float(row["High"]), float(row["Low"]), float(row["Close"])
 
-    if trade["phase"] == "STAGE_0":
-        if low <= trade["current_stop"]:
-            signals.append(_make_signal(trade["id"], trade["ticker"], day_date, "STOP",
-                                         trade["current_stop"], trade["remaining_shares"]))
-            trade["status"] = "CLOSED"
-            trade["remaining_shares"] = 0
-            return trade, signals
-        if high >= entry_price * (1 + TP1_PCT):
-            suggested = round(initial_shares * TP1_FRACTION)
-            signals.append(_make_signal(trade["id"], trade["ticker"], day_date, "TP1",
-                                         entry_price * (1 + TP1_PCT), suggested))
-            trade["current_stop"] = entry_price
-            trade["phase"] = "STAGE_1"
+    while trade["status"] == "OPEN":
+        phase = trade["phase"]
 
-    elif trade["phase"] == "STAGE_1":
-        if low <= trade["current_stop"]:
-            signals.append(_make_signal(trade["id"], trade["ticker"], day_date, "BREAKEVEN_STOP",
-                                         trade["current_stop"], trade["remaining_shares"]))
-            trade["status"] = "CLOSED"
-            trade["remaining_shares"] = 0
-            return trade, signals
-        if high >= entry_price * (1 + TP2_PCT):
-            suggested = round(initial_shares * TP2_FRACTION)
-            signals.append(_make_signal(trade["id"], trade["ticker"], day_date, "TP2",
-                                         entry_price * (1 + TP2_PCT), suggested))
-            trade["phase"] = "STAGE_2"
+        if phase == "STAGE_0":
+            if low <= trade["current_stop"]:
+                signals.append(_make_signal(trade["id"], trade["ticker"], day_date, "STOP",
+                                             trade["current_stop"], trade["remaining_shares"]))
+                trade["status"] = "CLOSED"
+                trade["remaining_shares"] = 0
+                break
+            if high >= entry_price * (1 + TP1_PCT):
+                suggested = round(initial_shares * TP1_FRACTION)
+                signals.append(_make_signal(trade["id"], trade["ticker"], day_date, "TP1",
+                                             entry_price * (1 + TP1_PCT), suggested))
+                trade["current_stop"] = entry_price
+                trade["phase"] = "STAGE_1"
+                continue
+            break
 
-    elif trade["phase"] == "STAGE_2":
-        ma50 = row.get("MA50Runner")
-        if ma50 is not None and not pd.isna(ma50) and close < float(ma50):
-            signals.append(_make_signal(trade["id"], trade["ticker"], day_date, "RUNNER_EXIT",
-                                         close, trade["remaining_shares"]))
-            trade["status"] = "CLOSED"
-            trade["remaining_shares"] = 0
+        if phase == "STAGE_1":
+            if low <= trade["current_stop"]:
+                signals.append(_make_signal(trade["id"], trade["ticker"], day_date, "BREAKEVEN_STOP",
+                                             trade["current_stop"], trade["remaining_shares"]))
+                trade["status"] = "CLOSED"
+                trade["remaining_shares"] = 0
+                break
+            if high >= entry_price * (1 + TP2_PCT):
+                suggested = round(initial_shares * TP2_FRACTION)
+                signals.append(_make_signal(trade["id"], trade["ticker"], day_date, "TP2",
+                                             entry_price * (1 + TP2_PCT), suggested))
+                trade["phase"] = "STAGE_2"
+                continue
+            break
+
+        if phase == "STAGE_2":
+            ma50 = row.get("MA50Runner")
+            if ma50 is not None and not pd.isna(ma50) and close < float(ma50):
+                signals.append(_make_signal(trade["id"], trade["ticker"], day_date, "RUNNER_EXIT",
+                                             close, trade["remaining_shares"]))
+                trade["status"] = "CLOSED"
+                trade["remaining_shares"] = 0
+            break
+
+        break
 
     return trade, signals
 
