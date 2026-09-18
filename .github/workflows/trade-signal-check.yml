@@ -1,0 +1,32 @@
+name: Trade Signal Check
+
+on:
+  schedule:
+    # 30분마다, 월~금, 13:00~23:30 UTC (미국 정규장 + 마감 후 여유 포함)
+    - cron: "*/30 13-23 * * 1-5"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  check-signals:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r topdown-strategy/quant_system/requirements.txt
+
+      - name: Scan trade journal and send Telegram alerts
+        env:
+          # 저장소 내 Contents API 쓰기이므로 Actions 기본 제공 토큰으로 충분 (별도 PAT 불필요)
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        working-directory: topdown-strategy/quant_system
+        run: python notify.py

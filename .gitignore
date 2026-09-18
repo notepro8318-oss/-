@@ -1,4 +1,3 @@
 .claude/
 __pycache__/
 *.pyc
-topdown-strategy/quant_system/trade_journal.csv

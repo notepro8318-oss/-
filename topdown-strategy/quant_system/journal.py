@@ -1,65 +1,130 @@
 """
-[Module 5] TradeJournal
+[Module 5] TradeJournal — 룰 기반 매도 시그널 추적기
 ====================================================
-사용자가 직접 입력한 매매(매매일/매수가/수량)를 CSV로 저장하고, v2 Runner
-전략의 매도 시퀀스(손절 -> TP1 -> TP2 -> Runner)를 현재가 기준으로 재현해
-현재 어느 단계인지, 그리고 가장 최근 거래일에 새로 발생한 이벤트가 있는지를
-판정한다.
+사용자가 등록한 포지션(Trade)의 상태(phase/remaining_shares/current_stop/status)를
+저장해 두고, 매수 후보 화면의 Runner 전략(손절 -> TP1 -> TP2 -> Runner)과 동일한
+규칙으로 신규 시그널을 감지한다.
+
+상태는 GitHub Contents API(공유 저장소, github_store.py)에 CSV로 저장되어
+Streamlit Cloud(라이브 대시보드)와 GitHub Actions(장중/마감 후 폴링 스케줄러)가
+동일한 매매일지를 공유한다. GITHUB_TOKEN이 없는 로컬 환경에서는 로컬 CSV로 폴백한다.
+
+핵심 규칙 (entry_price 대비):
+- STAGE_0: 저가 <= current_stop(=entry-2.5*ATR14) -> STOP, 전량 청산
+           고가 >= entry*1.10 -> TP1 시그널(최초수량의 30%), current_stop=entry(본전), phase=STAGE_1
+- STAGE_1: 저가 <= current_stop(본전) -> BREAKEVEN_STOP, 잔여 전량 청산
+           고가 >= entry*1.20 -> TP2 시그널(최초수량의 30%), phase=STAGE_2(Runner)
+- STAGE_2: 종가 < MA50 -> RUNNER_EXIT, 잔여 전량 청산
+
+TP1/TP2 시그널은 phase/current_stop을 즉시 갱신하지만, remaining_shares는
+사용자가 "체결 확인"을 눌러야 실제로 차감된다(실제 체결 수량이 다를 수 있으므로).
+손절류 시그널(STOP/BREAKEVEN_STOP/RUNNER_EXIT)은 전량 청산이 전제이므로 감지 즉시
+status=CLOSED, remaining_shares=0으로 자동 반영된다.
 """
 
 from __future__ import annotations
 
+import io
 import os
+import uuid
+from datetime import date, datetime
 
 import pandas as pd
 
 from qs_config import STOP_ATR_MULT_V2, TP1_PCT, TP1_FRACTION, TP2_PCT, TP2_FRACTION
 from data import fetch_ohlcv
 from execution import ExecutionEngine
-
-JOURNAL_CSV_PATH = os.path.join(os.path.dirname(__file__), "trade_journal.csv")
-JOURNAL_COLUMNS = ["ticker", "entry_date", "entry_price", "shares", "memo"]
+import github_store
 
 _execution = ExecutionEngine()
 
-STAGE_LABELS = {
-    "HOLDING": "보유중 (TP1 대기)",
-    "TP1_DONE": "TP1 완료 (TP2 대기, 손절가 본전 상향)",
-    "TP2_DONE": "TP2 완료 (잔여 물량 Runner 추세추종중)",
-    "EXITED": "전량 청산 완료",
+_LOCAL_DIR = os.path.dirname(__file__)
+TRADES_REPO_PATH = "topdown-strategy/quant_system/trade_journal.csv"
+TRADES_LOCAL_PATH = os.path.join(_LOCAL_DIR, "trade_journal.csv")
+SIGNALS_REPO_PATH = "topdown-strategy/quant_system/trade_signals.csv"
+SIGNALS_LOCAL_PATH = os.path.join(_LOCAL_DIR, "trade_signals.csv")
+
+TRADE_COLUMNS = [
+    "id", "ticker", "asset_name", "entry_date", "entry_price",
+    "initial_shares", "remaining_shares", "initial_stop", "current_stop",
+    "atr14_at_entry", "status", "phase", "last_checked_date", "memo",
+]
+SIGNAL_COLUMNS = ["id", "trade_id", "ticker", "date", "type", "price", "suggested_shares", "confirmed", "note"]
+
+PHASE_LABELS = {
+    "STAGE_0": "STAGE_0 · 대기 (TP1 전)",
+    "STAGE_1": "STAGE_1 · TP1 완료 (TP2 대기, 손절가 본전)",
+    "STAGE_2": "STAGE_2 · TP2 완료 · Runner 추세추종",
 }
-EXIT_REASON_LABELS = {
+SIGNAL_LABELS = {
+    "TP1": f"TP1 익절 (+{TP1_PCT*100:.0f}%)",
+    "TP2": f"TP2 익절 (+{TP2_PCT*100:.0f}%)",
     "STOP": "초기 손절",
     "BREAKEVEN_STOP": "본전 손절",
-    "RUNNER": "Runner(MA50 이탈) 청산",
+    "RUNNER_EXIT": "Runner 청산 (MA50 이탈)",
 }
 
 
-def load_journal() -> pd.DataFrame:
-    """저장된 매매일지를 불러온다. 파일이 없으면 빈 DataFrame을 반환한다."""
-    if os.path.exists(JOURNAL_CSV_PATH):
-        df = pd.read_csv(JOURNAL_CSV_PATH)
+# ------------------------------------------------------------------
+# 저장소 IO (GitHub Contents API, 미설정 시 로컬 CSV 폴백)
+# ------------------------------------------------------------------
+def _read_df(repo_path: str, local_path: str, columns: list[str]) -> pd.DataFrame:
+    if github_store.is_configured():
+        content, _ = github_store.get_file(repo_path)
+        if content is None:
+            return pd.DataFrame(columns=columns)
+        df = pd.read_csv(io.StringIO(content))
+    elif os.path.exists(local_path):
+        df = pd.read_csv(local_path)
+    else:
+        return pd.DataFrame(columns=columns)
+    for col in columns:
+        if col not in df.columns:
+            df[col] = None
+    return df[columns]
+
+
+def _write_df(df: pd.DataFrame, repo_path: str, local_path: str, message: str) -> None:
+    csv_text = df.to_csv(index=False)
+    if github_store.is_configured():
+        _, sha = github_store.get_file(repo_path)
+        github_store.put_file(repo_path, csv_text, message, sha=sha)
+    else:
+        df.to_csv(local_path, index=False)
+
+
+def load_trades() -> pd.DataFrame:
+    df = _read_df(TRADES_REPO_PATH, TRADES_LOCAL_PATH, TRADE_COLUMNS)
+    if not df.empty:
         df["entry_date"] = pd.to_datetime(df["entry_date"]).dt.date
-        return df
-    return pd.DataFrame(columns=JOURNAL_COLUMNS)
+        df["last_checked_date"] = pd.to_datetime(df["last_checked_date"]).dt.date
+        for col in ["entry_price", "initial_shares", "remaining_shares",
+                    "initial_stop", "current_stop", "atr14_at_entry"]:
+            df[col] = pd.to_numeric(df[col])
+    return df
 
 
-def save_journal(df: pd.DataFrame) -> None:
-    """매매일지를 CSV로 저장한다."""
-    df.to_csv(JOURNAL_CSV_PATH, index=False)
+def save_trades(df: pd.DataFrame, message: str = "Update trade journal") -> None:
+    _write_df(df, TRADES_REPO_PATH, TRADES_LOCAL_PATH, message)
 
 
-def compute_trade_status(ticker: str, entry_date, entry_price: float) -> dict:
-    """진입일 이후 종가 흐름을 따라가며 v2 매도 시퀀스(손절/TP1/TP2/Runner)를 재현한다.
+def load_signals() -> pd.DataFrame:
+    df = _read_df(SIGNALS_REPO_PATH, SIGNALS_LOCAL_PATH, SIGNAL_COLUMNS)
+    if not df.empty:
+        df["date"] = pd.to_datetime(df["date"]).dt.date
+        df["confirmed"] = df["confirmed"].astype(bool)
+    return df
 
-    Returns
-    -------
-    dict
-        stage, exit_reason, stop_initial/tp1_price/tp2_price, current_stop,
-        remaining_frac(잔여 비중), last_date/last_close, pnl_pct, events(발생 이력),
-        new_event_today(가장 최근 거래일에 새로 발생한 이벤트 여부) 등을 담은 dict.
-        오류 시 {"error": "..."}.
-    """
+
+def save_signals(df: pd.DataFrame, message: str = "Update trade signals") -> None:
+    _write_df(df, SIGNALS_REPO_PATH, SIGNALS_LOCAL_PATH, message)
+
+
+# ------------------------------------------------------------------
+# 진입 미리보기 / 등록
+# ------------------------------------------------------------------
+def preview_entry(ticker: str, entry_date, entry_price: float) -> dict:
+    """티커/매매일/매수가만으로 ATR14·손절가·TP1/TP2 목표가를 즉시 계산한다."""
     df = fetch_ohlcv(ticker, period="5y")
     if df.empty:
         return {"error": f"{ticker} 시세 데이터를 불러올 수 없습니다."}
@@ -68,82 +133,228 @@ def compute_trade_status(ticker: str, entry_date, entry_price: float) -> dict:
     ind = _execution.compute_indicators(df)
     valid_idx = ind.index[ind.index >= entry_ts]
     if len(valid_idx) == 0:
-        return {"error": "매매일 이후 거래일 데이터가 없습니다 (미래 날짜이거나 상장폐지 여부를 확인하세요)."}
+        return {"error": "매매일 이후 거래일 데이터가 없습니다 (미래 날짜이거나 데이터 지연일 수 있습니다)."}
 
     entry_idx = valid_idx[0]
-    atr_entry = ind.loc[entry_idx, "ATR14"]
-    if pd.isna(atr_entry):
+    atr = ind.loc[entry_idx, "ATR14"]
+    if pd.isna(atr):
         after = ind.loc[entry_idx:, "ATR14"].dropna()
         if after.empty:
-            return {"error": "ATR 계산에 필요한 데이터가 부족합니다 (상장 초기 종목일 수 있습니다)."}
-        atr_entry = float(after.iloc[0])
+            return {"error": "ATR 계산에 필요한 데이터가 부족합니다."}
+        atr = float(after.iloc[0])
     else:
-        atr_entry = float(atr_entry)
+        atr = float(atr)
 
-    stop_initial = entry_price - STOP_ATR_MULT_V2 * atr_entry
-    tp1_price = entry_price * (1 + TP1_PCT)
-    tp2_price = entry_price * (1 + TP2_PCT)
+    initial_stop = entry_price - STOP_ATR_MULT_V2 * atr
+    return {
+        "entry_idx": entry_idx,
+        "atr14": atr,
+        "initial_stop": initial_stop,
+        "tp1_price": entry_price * (1 + TP1_PCT),
+        "tp2_price": entry_price * (1 + TP2_PCT),
+    }
 
-    stage = "HOLDING"
-    current_stop = stop_initial
-    remaining_frac = 1.0
-    exit_reason = None
-    exit_date = None
-    exit_price = None
-    events: list[tuple] = []
 
-    path = ind.loc[entry_idx:]
-    for date, row in path.iterrows():
-        close = float(row["Close"])
+def add_trade(ticker: str, entry_date, entry_price: float, shares: int,
+              memo: str = "", asset_name: str = "") -> dict:
+    """미리보기 계산 결과로 신규 OPEN/STAGE_0 포지션을 등록한다."""
+    preview = preview_entry(ticker, entry_date, entry_price)
+    if "error" in preview:
+        return preview
 
-        if stage == "HOLDING":
-            if close <= current_stop:
-                stage, exit_reason, exit_date, exit_price = "EXITED", "STOP", date, close
-                events.append((date, f"🔴 손절 청산 — 종가 {close:.2f} ≤ 손절가 {current_stop:.2f}"))
+    trades_df = load_trades()
+    entry_idx = preview["entry_idx"]
+    new_row = {
+        "id": uuid.uuid4().hex[:12],
+        "ticker": ticker.strip().upper(),
+        "asset_name": asset_name.strip(),
+        "entry_date": entry_idx.date(),
+        "entry_price": entry_price,
+        "initial_shares": shares,
+        "remaining_shares": shares,
+        "initial_stop": preview["initial_stop"],
+        "current_stop": preview["initial_stop"],
+        "atr14_at_entry": preview["atr14"],
+        "status": "OPEN",
+        "phase": "STAGE_0",
+        # 등록일 하루 전부터 스캔을 시작해 진입일 당일 트리거도 놓치지 않는다.
+        "last_checked_date": entry_idx.date() - pd.Timedelta(days=1),
+        "memo": memo.strip(),
+    }
+    new_df = pd.DataFrame([new_row])
+    trades_df = new_df if trades_df.empty else pd.concat([trades_df, new_df], ignore_index=True)
+    save_trades(trades_df, f"Add trade: {new_row['ticker']} {new_row['entry_date']}")
+    return {"ok": True, "trade": new_row}
+
+
+def delete_trade(trade_id: str) -> None:
+    trades_df = load_trades()
+    trades_df = trades_df[trades_df["id"] != trade_id].reset_index(drop=True)
+    save_trades(trades_df, f"Delete trade {trade_id}")
+    signals_df = load_signals()
+    signals_df = signals_df[signals_df["trade_id"] != trade_id].reset_index(drop=True)
+    save_signals(signals_df, f"Delete signals for trade {trade_id}")
+
+
+# ------------------------------------------------------------------
+# 시그널 감지 (상태 머신)
+# ------------------------------------------------------------------
+def _make_signal(trade_id: str, ticker: str, sig_date, sig_type: str, price: float,
+                  suggested_shares: int) -> dict:
+    return {
+        "id": uuid.uuid4().hex[:12], "trade_id": trade_id, "ticker": ticker,
+        "date": sig_date.date() if hasattr(sig_date, "date") else sig_date,
+        "type": sig_type, "price": round(float(price), 4),
+        "suggested_shares": int(suggested_shares), "confirmed": False,
+        "note": SIGNAL_LABELS.get(sig_type, sig_type),
+    }
+
+
+def _simulate_day(trade: dict, day_date, row: pd.Series) -> tuple[dict, list[dict]]:
+    """하루치 High/Low/Close로 현재 phase의 트리거를 검사해 (갱신된 trade, 신규시그널들)을 반환."""
+    signals: list[dict] = []
+    if trade["status"] != "OPEN":
+        return trade, signals
+
+    entry_price = trade["entry_price"]
+    initial_shares = trade["initial_shares"]
+    high, low, close = float(row["High"]), float(row["Low"]), float(row["Close"])
+
+    if trade["phase"] == "STAGE_0":
+        if low <= trade["current_stop"]:
+            signals.append(_make_signal(trade["id"], trade["ticker"], day_date, "STOP",
+                                         trade["current_stop"], trade["remaining_shares"]))
+            trade["status"] = "CLOSED"
+            trade["remaining_shares"] = 0
+            return trade, signals
+        if high >= entry_price * (1 + TP1_PCT):
+            suggested = round(initial_shares * TP1_FRACTION)
+            signals.append(_make_signal(trade["id"], trade["ticker"], day_date, "TP1",
+                                         entry_price * (1 + TP1_PCT), suggested))
+            trade["current_stop"] = entry_price
+            trade["phase"] = "STAGE_1"
+
+    elif trade["phase"] == "STAGE_1":
+        if low <= trade["current_stop"]:
+            signals.append(_make_signal(trade["id"], trade["ticker"], day_date, "BREAKEVEN_STOP",
+                                         trade["current_stop"], trade["remaining_shares"]))
+            trade["status"] = "CLOSED"
+            trade["remaining_shares"] = 0
+            return trade, signals
+        if high >= entry_price * (1 + TP2_PCT):
+            suggested = round(initial_shares * TP2_FRACTION)
+            signals.append(_make_signal(trade["id"], trade["ticker"], day_date, "TP2",
+                                         entry_price * (1 + TP2_PCT), suggested))
+            trade["phase"] = "STAGE_2"
+
+    elif trade["phase"] == "STAGE_2":
+        ma50 = row.get("MA50Runner")
+        if ma50 is not None and not pd.isna(ma50) and close < float(ma50):
+            signals.append(_make_signal(trade["id"], trade["ticker"], day_date, "RUNNER_EXIT",
+                                         close, trade["remaining_shares"]))
+            trade["status"] = "CLOSED"
+            trade["remaining_shares"] = 0
+
+    return trade, signals
+
+
+def scan_open_trades() -> list[dict]:
+    """모든 OPEN 포지션을 마지막 확인일 다음날부터 최신 거래일까지 스캔해 신규 시그널을 감지/저장한다."""
+    trades_df = load_trades()
+    if trades_df.empty:
+        return []
+    signals_df = load_signals()
+
+    all_new_signals: list[dict] = []
+    any_trade_changed = False
+
+    for i, row in trades_df.iterrows():
+        if row["status"] != "OPEN":
+            continue
+        df = fetch_ohlcv(row["ticker"], period="5y")
+        if df.empty:
+            continue
+        ind = _execution.compute_indicators(df)
+        last_checked = pd.Timestamp(row["last_checked_date"])
+        to_scan = ind.loc[ind.index > last_checked]
+        if to_scan.empty:
+            continue
+
+        trade = row.to_dict()
+        day_signals: list[dict] = []
+        for day_date, day_row in to_scan.iterrows():
+            trade, sigs = _simulate_day(trade, day_date, day_row)
+            day_signals.extend(sigs)
+            trade["last_checked_date"] = day_date.date()
+            if trade["status"] == "CLOSED":
                 break
-            if close >= tp1_price:
-                stage = "TP1_DONE"
-                remaining_frac -= TP1_FRACTION
-                current_stop = entry_price
-                events.append((date, f"🟢 TP1 도달(+{TP1_PCT*100:.0f}%) — 물량 {TP1_FRACTION*100:.0f}% 익절, "
-                                      f"손절가 본전({entry_price:.2f})으로 상향"))
 
-        elif stage == "TP1_DONE":
-            if close <= current_stop:
-                stage, exit_reason, exit_date, exit_price = "EXITED", "BREAKEVEN_STOP", date, close
-                events.append((date, f"🟡 본전 손절 청산 — 종가 {close:.2f} ≤ {current_stop:.2f}"))
-                break
-            if close >= tp2_price:
-                stage = "TP2_DONE"
-                remaining_frac -= TP2_FRACTION
-                events.append((date, f"🟢 TP2 도달(+{TP2_PCT*100:.0f}%) — 물량 {TP2_FRACTION*100:.0f}% 추가 익절, "
-                                      f"잔여 {remaining_frac*100:.0f}% Runner 추세추종 전환"))
+        for col in TRADE_COLUMNS:
+            trades_df.at[i, col] = trade[col]
+        any_trade_changed = True
 
-        elif stage == "TP2_DONE":
-            ma50 = row["MA50Runner"]
-            if not pd.isna(ma50) and close < ma50:
-                stage, exit_reason, exit_date, exit_price = "EXITED", "RUNNER", date, close
-                events.append((date, f"🔵 Runner 청산 — 종가 {close:.2f} < MA50 {ma50:.2f}"))
-                break
+        if day_signals:
+            new_sig_df = pd.DataFrame(day_signals)
+            signals_df = new_sig_df if signals_df.empty else pd.concat([signals_df, new_sig_df], ignore_index=True)
+            all_new_signals.extend(day_signals)
 
-    last_date = path.index[-1]
-    last_close = float(path.iloc[-1]["Close"])
-    pnl_pct = (last_close / entry_price - 1.0) * 100.0
+    if any_trade_changed:
+        save_trades(trades_df, "Scan: update trade phase/status")
+    if all_new_signals:
+        save_signals(signals_df, f"Scan: {len(all_new_signals)} new signal(s)")
+
+    return all_new_signals
+
+
+def confirm_signal(signal_id: str) -> None:
+    """시그널을 확인 처리한다. TP류는 잔여 수량을 실제로 차감한다."""
+    signals_df = load_signals()
+    match = signals_df[signals_df["id"] == signal_id]
+    if match.empty:
+        return
+    sig = match.iloc[0]
+    signals_df.loc[signals_df["id"] == signal_id, "confirmed"] = True
+    save_signals(signals_df, f"Confirm signal {signal_id}")
+
+    if sig["type"] in ("TP1", "TP2"):
+        trades_df = load_trades()
+        tmatch = trades_df.index[trades_df["id"] == sig["trade_id"]]
+        if len(tmatch):
+            idx = tmatch[0]
+            remaining = max(0, int(trades_df.at[idx, "remaining_shares"]) - int(sig["suggested_shares"]))
+            trades_df.at[idx, "remaining_shares"] = remaining
+            save_trades(trades_df, f"Confirm fill: {sig['ticker']} {sig['type']}")
+
+
+# ------------------------------------------------------------------
+# 대시보드용 실시간 지표
+# ------------------------------------------------------------------
+def get_dashboard_metrics(trade: dict) -> dict:
+    """현재가 대비 손절/목표가 거리(%), R-배수 등 대시보드 표시용 값을 계산한다."""
+    df = fetch_ohlcv(trade["ticker"], period="5d")
+    if df.empty:
+        return {"error": f"{trade['ticker']} 현재가를 불러올 수 없습니다."}
+    last_close = float(df["Close"].iloc[-1])
+
+    entry_price = trade["entry_price"]
+    initial_risk = entry_price - trade["initial_stop"]
+    r_multiple = (last_close - entry_price) / initial_risk if initial_risk > 0 else float("nan")
+
+    if trade["phase"] == "STAGE_0":
+        target_price, target_label = entry_price * (1 + TP1_PCT), "TP1"
+    elif trade["phase"] == "STAGE_1":
+        target_price, target_label = entry_price * (1 + TP2_PCT), "TP2"
+    else:
+        target_price, target_label = None, "MA50"
+
+    dist_to_stop_pct = (last_close / trade["current_stop"] - 1) * 100 if trade["current_stop"] else float("nan")
+    dist_to_target_pct = (target_price / last_close - 1) * 100 if target_price else None
 
     return {
-        "stage": stage,
-        "exit_reason": exit_reason,
-        "exit_date": exit_date,
-        "exit_price": exit_price,
-        "atr_entry": atr_entry,
-        "stop_initial": stop_initial,
-        "tp1_price": tp1_price,
-        "tp2_price": tp2_price,
-        "current_stop": current_stop,
-        "remaining_frac": remaining_frac,
-        "last_date": last_date,
         "last_close": last_close,
-        "pnl_pct": pnl_pct,
-        "events": events,
-        "new_event_today": bool(events) and events[-1][0] == last_date,
+        "r_multiple": r_multiple,
+        "dist_to_stop_pct": dist_to_stop_pct,
+        "target_label": target_label,
+        "target_price": target_price,
+        "dist_to_target_pct": dist_to_target_pct,
     }

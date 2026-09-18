@@ -43,9 +43,11 @@ from screener import MomentumRanker
 from execution import ExecutionEngine
 from risk import RiskManager
 from journal import (
-    load_journal, save_journal, compute_trade_status,
-    STAGE_LABELS, EXIT_REASON_LABELS,
+    load_trades, load_signals, preview_entry, add_trade, delete_trade,
+    scan_open_trades, confirm_signal, get_dashboard_metrics,
+    PHASE_LABELS, SIGNAL_LABELS,
 )
+import github_store
 
 st.set_page_config(page_title="TopDown Quant System", page_icon="📊", layout="wide")
 
@@ -131,8 +133,17 @@ def load_usd_krw_rate():
 
 
 @st.cache_data(ttl=CACHE_TTL, show_spinner=False)
-def load_trade_status(ticker: str, entry_date, entry_price: float):
-    return compute_trade_status(ticker, entry_date, entry_price)
+def load_preview(ticker: str, entry_date, entry_price: float):
+    return preview_entry(ticker, entry_date, entry_price)
+
+
+@st.cache_data(ttl=CACHE_TTL, show_spinner=False)
+def load_dashboard_metrics(ticker: str, entry_price: float, initial_stop: float,
+                            current_stop: float, phase: str):
+    return get_dashboard_metrics({
+        "ticker": ticker, "entry_price": entry_price,
+        "initial_stop": initial_stop, "current_stop": current_stop, "phase": phase,
+    })
 
 
 def fmt_pct(v: float) -> str:
@@ -176,133 +187,146 @@ def _on_usd_change():
     st.session_state["capital_usd_text"] = _fmt_comma(raw)
 
 
-if "journal_df" not in st.session_state:
-    st.session_state["journal_df"] = load_journal()
-
 with st.sidebar:
+    tab_journal, tab_screening = st.tabs(["📓 매매일지", "🔍 스크리닝"])
+
     # ================================================================
-    # 매매일지 (Trade Journal) — 사이드바 최상단
+    # 탭 1: 매매일지 (Trade Journal) — 룰 기반 매도 시그널 추적
     # ================================================================
-    st.header("📓 매매일지")
-    st.caption("매매일/매수가/수량을 입력하면 v2 매도 시퀀스(손절→TP1→TP2→Runner)를 "
-               "현재가 기준으로 재현해 지금 단계와 신규 이벤트를 알려줍니다.")
+    with tab_journal:
+        if github_store.is_configured():
+            st.caption("✅ GitHub 저장소와 동기화 중 (스케줄러와 상태 공유)")
+        else:
+            st.caption("⚠️ GitHub 미연동 — 로컬에만 저장되며 정기 스캔 스케줄러와 공유되지 않습니다.")
 
-    with st.form("journal_add_form", clear_on_submit=True):
-        j_ticker = st.text_input("종목 티커", placeholder="예: AAPL")
-        j_date = st.date_input("매매일", value=datetime.now().date())
-        j_price = st.number_input("매수가", min_value=0.0, step=0.01, format="%.2f")
-        j_shares = st.number_input("수량", min_value=0, step=1)
-        j_memo = st.text_input("메모 (선택)", placeholder="예: 눌림목 진입")
-        submitted = st.form_submit_button("➕ 매매일지에 추가", type="primary", use_container_width=True)
+        with st.expander("➕ 신규 포지션 등록"):
+            nj_ticker = st.text_input("종목 티커", placeholder="예: AAPL", key="nj_ticker")
+            nj_date = st.date_input("매매일", value=datetime.now().date(), key="nj_date")
+            nj_price = st.number_input("매수가", min_value=0.0, step=0.01, format="%.2f", key="nj_price")
+            nj_shares = st.number_input("수량", min_value=0, step=1, key="nj_shares")
+            nj_memo = st.text_input("메모 (선택)", placeholder="예: 눌림목 진입", key="nj_memo")
 
-        if submitted:
-            if not j_ticker.strip() or j_price <= 0 or j_shares <= 0:
-                st.warning("종목 티커, 매수가, 수량을 올바르게 입력해 주세요.")
+            if nj_ticker.strip() and nj_price > 0:
+                preview = load_preview(nj_ticker.strip().upper(), nj_date, nj_price)
+                if "error" in preview:
+                    st.warning(preview["error"])
+                else:
+                    st.caption(f"ATR14: {preview['atr14']:.2f} · 손절가: {preview['initial_stop']:.2f} · "
+                               f"TP1: {preview['tp1_price']:.2f} · TP2: {preview['tp2_price']:.2f}")
+
+            if st.button("➕ 매매일지에 추가", type="primary", use_container_width=True, key="nj_submit"):
+                if not nj_ticker.strip() or nj_price <= 0 or nj_shares <= 0:
+                    st.warning("종목 티커, 매수가, 수량을 올바르게 입력해 주세요.")
+                else:
+                    result = add_trade(nj_ticker.strip().upper(), nj_date, nj_price, int(nj_shares), nj_memo)
+                    if "error" in result:
+                        st.error(result["error"])
+                    else:
+                        st.cache_data.clear()
+                        st.rerun()
+
+        if st.button("🔄 시그널 확인", use_container_width=True):
+            with st.spinner("전체 OPEN 포지션 스캔 중..."):
+                new_signals = scan_open_trades()
+            st.cache_data.clear()
+            if new_signals:
+                st.success(f"신규 시그널 {len(new_signals)}건 발생")
             else:
-                new_row = pd.DataFrame([{
-                    "ticker": j_ticker.strip().upper(), "entry_date": j_date,
-                    "entry_price": j_price, "shares": j_shares, "memo": j_memo.strip(),
-                }])
-                st.session_state["journal_df"] = pd.concat(
-                    [st.session_state["journal_df"], new_row], ignore_index=True)
-                save_journal(st.session_state["journal_df"])
-                st.rerun()
+                st.info("신규 시그널 없음")
+            st.rerun()
 
-    journal_df = st.session_state["journal_df"]
+        trades_df = load_trades()
+        signals_df = load_signals()
+        open_trades = trades_df[trades_df["status"] == "OPEN"] if not trades_df.empty else trades_df
+        closed_trades = trades_df[trades_df["status"] == "CLOSED"] if not trades_df.empty else trades_df
 
-    if journal_df.empty:
-        st.caption("아직 등록된 매매 기록이 없습니다.")
-    else:
-        for i, jrow in journal_df.iterrows():
-            ticker = str(jrow["ticker"])
-            entry_date = jrow["entry_date"]
-            entry_price = float(jrow["entry_price"])
-            shares = int(jrow["shares"])
-            memo = jrow.get("memo", "")
+        if trades_df.empty:
+            st.caption("아직 등록된 포지션이 없습니다.")
 
-            with st.spinner(f"{ticker} 매도 시퀀스 계산 중..."):
-                status = load_trade_status(ticker, entry_date, entry_price)
-
-            if "error" in status:
-                label = f"⚠️ {ticker} · {entry_date}"
-            else:
-                stage_emoji = {"HOLDING": "🟡", "TP1_DONE": "🔵", "TP2_DONE": "🟢", "EXITED": "⚫"}[status["stage"]]
-                bell = "🔔" if status.get("new_event_today") else ""
-                label = f"{stage_emoji}{bell} {ticker} · {entry_date}"
+        for _, trow in open_trades.iterrows():
+            trade_id = trow["id"]
+            ticker = trow["ticker"]
+            pending = signals_df[(signals_df["trade_id"] == trade_id) & (~signals_df["confirmed"])] \
+                if not signals_df.empty else signals_df
+            bell = "🔔" if len(pending) > 0 else ""
+            phase_emoji = {"STAGE_0": "🟡", "STAGE_1": "🔵", "STAGE_2": "🟢"}.get(trow["phase"], "")
+            label = f"{phase_emoji}{bell} {ticker} · {trow['entry_date']}"
 
             with st.expander(label):
-                st.caption(f"매수가 {entry_price:.2f} · 수량 {shares:,}주" + (f" · {memo}" if memo else ""))
-                if st.button("🗑️ 삭제", key=f"journal_del_{i}", use_container_width=True):
-                    st.session_state["journal_df"] = journal_df.drop(index=i).reset_index(drop=True)
-                    save_journal(st.session_state["journal_df"])
+                st.caption(f"매수가 {trow['entry_price']:.2f} · 최초 {int(trow['initial_shares']):,}주 · "
+                           f"잔여 {int(trow['remaining_shares']):,}주" +
+                           (f" · {trow['memo']}" if trow.get("memo") else ""))
+
+                if st.button("🗑️ 포지션 삭제", key=f"del_{trade_id}", use_container_width=True):
+                    delete_trade(trade_id)
+                    st.cache_data.clear()
                     st.rerun()
 
-                if "error" in status:
-                    st.error(status["error"])
-                    continue
+                if len(pending) > 0:
+                    for _, sig in pending.iterrows():
+                        st.warning(f"🔔 **{SIGNAL_LABELS.get(sig['type'], sig['type'])}** "
+                                   f"({sig['date']}, {sig['price']:.2f}, {int(sig['suggested_shares']):,}주)")
+                        if st.button("✅ 체결 확인", key=f"confirm_{sig['id']}", use_container_width=True):
+                            confirm_signal(sig["id"])
+                            st.cache_data.clear()
+                            st.rerun()
 
-                stage = status["stage"]
-                remaining_shares = int(round(shares * status["remaining_frac"]))
-
-                if status["new_event_today"]:
-                    st.success(f"🔔 **[{status['last_date'].date()} 신규]** {status['events'][-1][1]}")
-
-                if stage == "EXITED":
-                    st.error(f"**{STAGE_LABELS[stage]}**\n\n"
-                             f"{EXIT_REASON_LABELS.get(status['exit_reason'], '-')}, "
-                             f"{status['exit_date'].date()} 종가 {status['exit_price']:.2f}")
-                elif stage == "TP2_DONE":
-                    st.success(f"**{STAGE_LABELS[stage]}**")
-                elif stage == "TP1_DONE":
-                    st.info(f"**{STAGE_LABELS[stage]}**")
+                metrics = load_dashboard_metrics(ticker, float(trow["entry_price"]), float(trow["initial_stop"]),
+                                                  float(trow["current_stop"]), trow["phase"])
+                if "error" in metrics:
+                    st.error(metrics["error"])
                 else:
-                    st.warning(f"**{STAGE_LABELS[stage]}**")
+                    st.info(f"**{PHASE_LABELS.get(trow['phase'], trow['phase'])}**")
+                    st.write(f"현재가 **{metrics['last_close']:.2f}** · R배수 {metrics['r_multiple']:+.2f}R")
+                    st.write(f"손절가 {trow['current_stop']:.2f} (거리 {fmt_pct(metrics['dist_to_stop_pct'])})")
+                    if metrics["target_price"] is not None:
+                        st.write(f"{metrics['target_label']} 목표가 {metrics['target_price']:.2f} "
+                                 f"(거리 {fmt_pct(metrics['dist_to_target_pct'])})")
+                    else:
+                        st.write("Runner 모드 — MA50 이탈 시 잔여 물량 청산")
 
-                st.write(f"현재가 **{status['last_close']:.2f}** ({fmt_pct(status['pnl_pct'])})")
-                st.write(f"현재 손절가 {status['current_stop']:.2f} · "
-                         f"TP1 {status['tp1_price']:.2f} · TP2 {status['tp2_price']:.2f}")
-                st.write(f"잔여 수량: {remaining_shares:,}주" if stage != "EXITED" else "잔여 수량: 0주")
-
-                if status["events"]:
-                    st.caption("이벤트 이력")
-                    for ev_date, ev_text in status["events"]:
-                        st.caption(f"- {ev_date.date()}: {ev_text}")
-
-    st.divider()
+        if not closed_trades.empty:
+            with st.expander(f"⚫ 종료된 포지션 ({len(closed_trades)}건)"):
+                for _, trow in closed_trades.iterrows():
+                    st.caption(f"{trow['ticker']} · {trow['entry_date']} 진입 {trow['entry_price']:.2f} · "
+                               f"{PHASE_LABELS.get(trow['phase'], trow['phase'])}")
+                    if st.button("🗑️ 삭제", key=f"del_closed_{trow['id']}"):
+                        delete_trade(trow["id"])
+                        st.cache_data.clear()
+                        st.rerun()
 
     # ================================================================
-    # 설정 (자본금)
+    # 탭 2: 스크리닝 (자본금 설정)
     # ================================================================
-    st.header("⚙️ 설정")
+    with tab_screening:
+        if usd_krw_rate:
+            st.caption(f"실시간 환율(USD/KRW): 1달러 = {usd_krw_rate:,.2f}원")
+            default_krw = int(INITIAL_EQUITY * usd_krw_rate)
+        else:
+            st.caption("⚠️ 환율 조회 실패 — 달러 금액을 직접 입력해 주세요.")
+            default_krw = int(INITIAL_EQUITY * 1_300)
 
-    if usd_krw_rate:
-        st.caption(f"실시간 환율(USD/KRW): 1달러 = {usd_krw_rate:,.2f}원")
-        default_krw = int(INITIAL_EQUITY * usd_krw_rate)
-    else:
-        st.caption("⚠️ 환율 조회 실패 — 달러 금액을 직접 입력해 주세요.")
-        default_krw = int(INITIAL_EQUITY * 1_300)
+        st.text_input(
+            "계좌 자본금 (₩)", value=_fmt_comma(default_krw),
+            key="capital_krw_text", on_change=_on_krw_change, disabled=usd_krw_rate is None,
+            help="원화로 입력하면 실시간 환율로 환산되어 아래 달러 금액에 자동 반영됩니다. "
+                 "3자리마다 콤마(,)가 자동으로 표시됩니다.",
+        )
+        st.text_input(
+            "계좌 자본금 ($)", value=_fmt_comma(INITIAL_EQUITY),
+            key="capital_usd_text", on_change=_on_usd_change,
+            help="3자리마다 콤마(,)가 자동으로 표시됩니다.",
+        )
+        capital = _parse_comma(st.session_state["capital_usd_text"])
+        st.caption(f"1회 진입 리스크: 자본의 {V2_RISK_PCT*100:.0f}% · 단일종목 상한: 자본의 {V2_POSITION_CAP_PCT*100:.0f}%")
 
-    st.text_input(
-        "계좌 자본금 (₩)", value=_fmt_comma(default_krw),
-        key="capital_krw_text", on_change=_on_krw_change, disabled=usd_krw_rate is None,
-        help="원화로 입력하면 실시간 환율로 환산되어 아래 달러 금액에 자동 반영됩니다. "
-             "3자리마다 콤마(,)가 자동으로 표시됩니다.",
-    )
-    st.text_input(
-        "계좌 자본금 ($)", value=_fmt_comma(INITIAL_EQUITY),
-        key="capital_usd_text", on_change=_on_usd_change,
-        help="3자리마다 콤마(,)가 자동으로 표시됩니다.",
-    )
-    capital = _parse_comma(st.session_state["capital_usd_text"])
-    st.caption(f"1회 진입 리스크: 자본의 {V2_RISK_PCT*100:.0f}% · 단일종목 상한: 자본의 {V2_POSITION_CAP_PCT*100:.0f}%")
+        if st.button("🔄 시그널 새로고침", use_container_width=True):
+            st.cache_data.clear()
+            st.rerun()
 
-    if st.button("🔄 시그널 새로고침", use_container_width=True):
-        st.cache_data.clear()
-        st.rerun()
-
-    st.divider()
-    st.caption(f"조회 시각: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    st.caption("데이터: yfinance (지연 시세) · 캐시 15분")
+        st.divider()
+        st.caption(f"조회 시각: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        st.caption("데이터: yfinance (지연 시세) · 캐시 15분")
 
 st.title("📊 TopDownQuantSystem — 모멘텀 랭킹 + Runner 대시보드")
 st.caption("MarketRegimeDetector → SectorRotationEngine → MomentumRanker → ExecutionEngine/RiskManager "
