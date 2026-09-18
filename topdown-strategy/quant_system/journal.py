@@ -43,15 +43,18 @@ TRADES_REPO_PATH = "topdown-strategy/quant_system/trade_journal.csv"
 TRADES_LOCAL_PATH = os.path.join(_LOCAL_DIR, "trade_journal.csv")
 SIGNALS_REPO_PATH = "topdown-strategy/quant_system/trade_signals.csv"
 SIGNALS_LOCAL_PATH = os.path.join(_LOCAL_DIR, "trade_signals.csv")
+EXITS_REPO_PATH = "topdown-strategy/quant_system/trade_exits.csv"
+EXITS_LOCAL_PATH = os.path.join(_LOCAL_DIR, "trade_exits.csv")
 
 TRADE_COLUMNS = [
     "id", "ticker", "asset_name", "entry_date", "entry_price",
     "initial_shares", "remaining_shares", "initial_stop", "current_stop",
     "atr14_at_entry", "status", "phase", "last_checked_date", "memo", "archived",
-    "exit_price",
 ]
 SIGNAL_COLUMNS = ["id", "trade_id", "ticker", "date", "type", "price", "suggested_shares",
                    "confirmed", "notified", "note"]
+# History에서 수동으로 기록하는 매도 내역 (분할 매도 지원 — 포지션당 여러 건 가능)
+EXIT_COLUMNS = ["id", "trade_id", "date", "price", "shares", "memo"]
 
 PHASE_LABELS = {
     "STAGE_0": "STAGE_0 · 대기 (TP1 전)",
@@ -104,7 +107,6 @@ def load_trades() -> pd.DataFrame:
                     "initial_stop", "current_stop", "atr14_at_entry"]:
             df[col] = pd.to_numeric(df[col])
         df["archived"] = df["archived"].fillna(False).astype(bool)
-        df["exit_price"] = pd.to_numeric(df["exit_price"], errors="coerce")
     return df
 
 
@@ -125,6 +127,40 @@ def load_signals() -> pd.DataFrame:
 
 def save_signals(df: pd.DataFrame, message: str = "Update trade signals") -> None:
     _write_df(df, SIGNALS_REPO_PATH, SIGNALS_LOCAL_PATH, message)
+
+
+def load_exits() -> pd.DataFrame:
+    """History에서 기록한 매도 내역(분할 매도 포함)을 불러온다."""
+    df = _read_df(EXITS_REPO_PATH, EXITS_LOCAL_PATH, EXIT_COLUMNS)
+    if not df.empty:
+        df["date"] = pd.to_datetime(df["date"]).dt.date
+        df["price"] = pd.to_numeric(df["price"])
+        df["shares"] = pd.to_numeric(df["shares"]).astype(int)
+    return df
+
+
+def save_exits(df: pd.DataFrame, message: str = "Update trade exits") -> None:
+    _write_df(df, EXITS_REPO_PATH, EXITS_LOCAL_PATH, message)
+
+
+def add_exit(trade_id: str, exit_date, price: float, shares: int, memo: str = "") -> dict:
+    """포지션에 매도 기록을 한 건 추가한다 (분할 매도는 여러 번 호출)."""
+    exits_df = load_exits()
+    new_row = {
+        "id": uuid.uuid4().hex[:12], "trade_id": trade_id,
+        "date": exit_date, "price": price, "shares": int(shares), "memo": memo.strip(),
+    }
+    new_df = pd.DataFrame([new_row])
+    exits_df = new_df if exits_df.empty else pd.concat([exits_df, new_df], ignore_index=True)
+    save_exits(exits_df, f"Add exit for trade {trade_id}: {shares}주 @ {price}")
+    return new_row
+
+
+def delete_exit(exit_id: str) -> None:
+    """잘못 입력한 매도 기록을 삭제한다."""
+    exits_df = load_exits()
+    exits_df = exits_df[exits_df["id"] != exit_id].reset_index(drop=True)
+    save_exits(exits_df, f"Delete exit {exit_id}")
 
 
 # ------------------------------------------------------------------
@@ -188,7 +224,6 @@ def add_trade(ticker: str, entry_date, entry_price: float, shares: int,
         "last_checked_date": entry_idx.date() - pd.Timedelta(days=1),
         "memo": memo.strip(),
         "archived": False,
-        "exit_price": None,
     }
     new_df = pd.DataFrame([new_row])
     trades_df = new_df if trades_df.empty else pd.concat([trades_df, new_df], ignore_index=True)
@@ -210,21 +245,17 @@ def restore_trade(trade_id: str) -> None:
     save_trades(trades_df, f"Restore trade {trade_id}")
 
 
-def set_exit_price(trade_id: str, exit_price: float) -> None:
-    """History에서 사용자가 직접 입력한 매도가격을 저장한다 (매수가 대비 증감률 계산용)."""
-    trades_df = load_trades()
-    trades_df.loc[trades_df["id"] == trade_id, "exit_price"] = exit_price
-    save_trades(trades_df, f"Set exit price for trade {trade_id}")
-
-
 def delete_trade(trade_id: str) -> None:
-    """포지션과 관련 시그널을 완전히 삭제한다 (History에서 영구 삭제할 때 사용)."""
+    """포지션과 관련 시그널/매도기록을 완전히 삭제한다 (History에서 영구 삭제할 때 사용)."""
     trades_df = load_trades()
     trades_df = trades_df[trades_df["id"] != trade_id].reset_index(drop=True)
     save_trades(trades_df, f"Delete trade {trade_id}")
     signals_df = load_signals()
     signals_df = signals_df[signals_df["trade_id"] != trade_id].reset_index(drop=True)
     save_signals(signals_df, f"Delete signals for trade {trade_id}")
+    exits_df = load_exits()
+    exits_df = exits_df[exits_df["trade_id"] != trade_id].reset_index(drop=True)
+    save_exits(exits_df, f"Delete exits for trade {trade_id}")
 
 
 # ------------------------------------------------------------------

@@ -44,7 +44,8 @@ from execution import ExecutionEngine
 from risk import RiskManager
 from journal import (
     load_trades, load_signals, preview_entry, add_trade, delete_trade,
-    archive_trade, restore_trade, set_exit_price,
+    archive_trade, restore_trade,
+    load_exits, add_exit, delete_exit,
     scan_open_trades, confirm_signal, get_dashboard_metrics,
     PHASE_LABELS, SIGNAL_LABELS,
 )
@@ -151,6 +152,12 @@ def fmt_pct(v: float) -> str:
     return f"{v:+.2f}%" if v is not None else "N/A"
 
 
+def _has_text(v) -> bool:
+    """빈 메모(NaN, 빈 문자열)를 걸러낸다. pandas가 빈 문자열을 NaN(float)으로 읽어
+    '· nan'처럼 잘못 표시되는 것을 방지한다."""
+    return pd.notna(v) and str(v).strip() != ""
+
+
 def _stockanalysis_url(ticker: str) -> str:
     return f"https://stockanalysis.com/stocks/{ticker}/"
 
@@ -168,6 +175,82 @@ def _parse_comma(s: str) -> float:
     """콤마/공백 등을 제거하고 숫자만 남겨 float으로 변환한다. 빈 값이면 0."""
     digits = "".join(ch for ch in str(s) if ch.isdigit() or ch == ".")
     return float(digits) if digits else 0.0
+
+
+def _render_history_card(hrow, exits_df, key_prefix: str, compact: bool = False) -> None:
+    """History 카드 하나를 렌더링한다 (사이드바=compact, 메인화면=상세).
+
+    진입 정보(종목/진입일/진입가/진입수량/투자금액)는 항상 표시하고, 우측 "➕ 매도"
+    버튼을 누르면 일시/매도가/매도수량/메모 입력폼이 나타나 분할 매도 기록을
+    여러 건 남길 수 있다.
+    """
+    trade_id = hrow["id"]
+    ticker = hrow["ticker"]
+    invested = hrow["entry_price"] * hrow["initial_shares"]
+    trade_exits = exits_df[exits_df["trade_id"] == trade_id] if not exits_df.empty else exits_df
+    sold_shares = int(trade_exits["shares"].sum()) if not trade_exits.empty else 0
+    remaining = int(hrow["initial_shares"]) - sold_shares
+    show_key = f"{key_prefix}_show_exit_form_{trade_id}"
+    if show_key not in st.session_state:
+        st.session_state[show_key] = False
+
+    with st.container(border=True):
+        hcol1, hcol2 = st.columns([5, 1])
+        hcol1.markdown(f"**[{ticker}]({_stockanalysis_url(ticker)})** · {hrow['entry_date']} 진입" +
+                        (f" · _{hrow['memo']}_" if _has_text(hrow.get("memo")) else ""))
+        if hcol2.button("➕ 매도", key=f"{key_prefix}_toggle_exit_{trade_id}", use_container_width=True):
+            st.session_state[show_key] = not st.session_state[show_key]
+            st.rerun()
+
+        if compact:
+            st.caption(f"진입가 {hrow['entry_price']:.2f} · 진입수량 {int(hrow['initial_shares']):,}주 · "
+                       f"투자금액 ${invested:,.0f} · 잔여 {remaining:,}주")
+        else:
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("진입가", f"{hrow['entry_price']:.2f}")
+            m2.metric("진입 수량", f"{int(hrow['initial_shares']):,}주")
+            m3.metric("투자 금액", f"${invested:,.0f}")
+            m4.metric("잔여 수량", f"{remaining:,}주")
+
+        if st.session_state[show_key]:
+            with st.container(border=True):
+                ex_date = st.date_input("일시", value=datetime.now().date(), key=f"{key_prefix}_exit_date_{trade_id}")
+                ex_price = st.number_input("매도가", min_value=0.0, step=0.01, format="%.2f",
+                                            key=f"{key_prefix}_exit_price_{trade_id}")
+                ex_shares = st.number_input("매도수량", min_value=0, step=1,
+                                             key=f"{key_prefix}_exit_shares_{trade_id}")
+                ex_memo = st.text_input("메모", placeholder="예: 1차 분할매도",
+                                         key=f"{key_prefix}_exit_memo_{trade_id}")
+                if st.button("💾 매도 기록 저장", key=f"{key_prefix}_exit_save_{trade_id}", use_container_width=True):
+                    if ex_price > 0 and ex_shares > 0:
+                        add_exit(trade_id, ex_date, ex_price, int(ex_shares), ex_memo)
+                        st.session_state[show_key] = False
+                        st.cache_data.clear()
+                        st.rerun()
+                    else:
+                        st.warning("매도가와 매도수량을 올바르게 입력해 주세요.")
+
+        if not trade_exits.empty:
+            st.caption("매도 기록")
+            for _, ex in trade_exits.sort_values("date").iterrows():
+                pct = (ex["price"] / hrow["entry_price"] - 1) * 100 if hrow["entry_price"] else None
+                xcol1, xcol2 = st.columns([5, 1])
+                xcol1.write(f"{ex['date']} · {ex['price']:.2f} · {int(ex['shares']):,}주 · {fmt_pct(pct)}" +
+                            (f" · {ex['memo']}" if _has_text(ex.get("memo")) else ""))
+                if xcol2.button("🗑️", key=f"{key_prefix}_exit_del_{ex['id']}", use_container_width=True):
+                    delete_exit(ex["id"])
+                    st.cache_data.clear()
+                    st.rerun()
+
+        rc1, rc2 = st.columns(2)
+        if rc1.button("♻️ 복원", key=f"{key_prefix}_restore_{trade_id}", use_container_width=True):
+            restore_trade(trade_id)
+            st.cache_data.clear()
+            st.rerun()
+        if rc2.button("🗑️ 완전 삭제", key=f"{key_prefix}_harddel_{trade_id}", use_container_width=True):
+            delete_trade(trade_id)
+            st.cache_data.clear()
+            st.rerun()
 
 
 # ------------------------------------------------------------------
@@ -231,6 +314,7 @@ with st.sidebar:
 
         trades_df = load_trades()
         signals_df = load_signals()
+        exits_df = load_exits()
         active_trades = trades_df[~trades_df["archived"]] if not trades_df.empty else trades_df
         open_trades = active_trades[active_trades["status"] == "OPEN"] if not active_trades.empty else active_trades
         closed_trades = active_trades[active_trades["status"] == "CLOSED"] if not active_trades.empty else active_trades
@@ -241,32 +325,7 @@ with st.sidebar:
                 st.caption("기록/삭제로 옮긴 포지션이 여기에 표시됩니다.")
             else:
                 for _, hrow in archived_trades.iterrows():
-                    st.caption(f"{hrow['ticker']} · 매수일 {hrow['entry_date']} · 매수가 {hrow['entry_price']:.2f} · "
-                               f"{int(hrow['initial_shares']):,}주")
-
-                    has_exit = pd.notna(hrow["exit_price"])
-                    new_exit = st.number_input(
-                        "매도가격", min_value=0.0, step=0.01, format="%.2f",
-                        value=float(hrow["exit_price"]) if has_exit else 0.0,
-                        key=f"exit_price_input_{hrow['id']}",
-                    )
-                    if st.button("💾 매도가격 저장", key=f"exit_price_save_{hrow['id']}", use_container_width=True):
-                        set_exit_price(hrow["id"], new_exit)
-                        st.cache_data.clear()
-                        st.rerun()
-                    if has_exit and hrow["entry_price"]:
-                        pct = (float(hrow["exit_price"]) / hrow["entry_price"] - 1) * 100
-                        st.write(f"증감률: **{fmt_pct(pct)}**")
-
-                    hc1, hc2 = st.columns(2)
-                    if hc1.button("♻️ 복원", key=f"restore_{hrow['id']}", use_container_width=True):
-                        restore_trade(hrow["id"])
-                        st.cache_data.clear()
-                        st.rerun()
-                    if hc2.button("🗑️ 완전 삭제", key=f"harddel_{hrow['id']}", use_container_width=True):
-                        delete_trade(hrow["id"])
-                        st.cache_data.clear()
-                        st.rerun()
+                    _render_history_card(hrow, exits_df, key_prefix="side", compact=True)
 
         if st.button("🔄 시그널 확인", use_container_width=True):
             with st.spinner("전체 OPEN 포지션 스캔 중..."):
@@ -293,7 +352,7 @@ with st.sidebar:
             with st.expander(label):
                 st.caption(f"매수가 {trow['entry_price']:.2f} · 최초 {int(trow['initial_shares']):,}주 · "
                            f"잔여 {int(trow['remaining_shares']):,}주" +
-                           (f" · {trow['memo']}" if trow.get("memo") else ""))
+                           (f" · {trow['memo']}" if _has_text(trow.get("memo")) else ""))
 
                 if st.button("📁 기록/삭제", key=f"del_{trade_id}", use_container_width=True):
                     archive_trade(trade_id)
@@ -401,7 +460,7 @@ else:
                 hcol1, hcol2 = st.columns([6, 1])
                 hcol1.markdown(f"### {phase_emoji} [{ticker}]({_stockanalysis_url(ticker)}) · "
                                 f"{trow['entry_date']} 진입{bell}" +
-                                (f" · _{trow['memo']}_" if trow.get("memo") else ""))
+                                (f" · _{trow['memo']}_" if _has_text(trow.get("memo")) else ""))
                 if hcol2.button("📁 기록/삭제", key=f"main_del_{trade_id}"):
                     archive_trade(trade_id)
                     st.cache_data.clear()
@@ -444,46 +503,19 @@ else:
             ccol1, ccol2 = st.columns([5, 1])
             ccol1.write(f"{trow['ticker']} · {trow['entry_date']} 진입 {trow['entry_price']:.2f} · "
                         f"{PHASE_LABELS.get(trow['phase'], trow['phase'])}" +
-                        (f" · {trow['memo']}" if trow.get("memo") else ""))
+                        (f" · {trow['memo']}" if _has_text(trow.get("memo")) else ""))
             if ccol2.button("📁 기록/삭제", key=f"main_del_closed_{trow['id']}", use_container_width=True):
                 archive_trade(trow["id"])
                 st.cache_data.clear()
                 st.rerun()
 
     with tab_history:
-        st.caption("'기록/삭제'로 옮긴 포지션입니다. 시그널 추적 대상에서 제외됩니다.")
+        st.caption("'기록/삭제'로 옮긴 포지션입니다. 시그널 추적 대상에서 제외됩니다. "
+                   "➕ 매도 버튼으로 분할 매도를 포함한 매도 기록을 여러 건 남길 수 있습니다.")
         if archived_trades.empty:
             st.info("History에 저장된 포지션이 없습니다.")
         for _, trow in archived_trades.iterrows():
-            with st.container(border=True):
-                hcol1, hcol2, hcol3 = st.columns([5, 1, 1])
-                hcol1.markdown(f"**{trow['ticker']}** · 매수일 {trow['entry_date']} · 매수가 {trow['entry_price']:.2f} · "
-                               f"{int(trow['initial_shares']):,}주 · "
-                               f"{PHASE_LABELS.get(trow['phase'], trow['phase'])} ({trow['status']})" +
-                               (f" · _{trow['memo']}_" if trow.get("memo") else ""))
-                if hcol2.button("♻️ 복원", key=f"main_restore_{trow['id']}", use_container_width=True):
-                    restore_trade(trow["id"])
-                    st.cache_data.clear()
-                    st.rerun()
-                if hcol3.button("🗑️ 완전 삭제", key=f"main_harddel_{trow['id']}", use_container_width=True):
-                    delete_trade(trow["id"])
-                    st.cache_data.clear()
-                    st.rerun()
-
-                has_exit = pd.notna(trow["exit_price"])
-                ecol1, ecol2, ecol3 = st.columns([2, 1, 2])
-                new_exit = ecol1.number_input(
-                    "매도가격", min_value=0.0, step=0.01, format="%.2f",
-                    value=float(trow["exit_price"]) if has_exit else 0.0,
-                    key=f"main_exit_price_input_{trow['id']}",
-                )
-                if ecol2.button("💾 저장", key=f"main_exit_price_save_{trow['id']}", use_container_width=True):
-                    set_exit_price(trow["id"], new_exit)
-                    st.cache_data.clear()
-                    st.rerun()
-                if has_exit and trow["entry_price"]:
-                    pct = (float(trow["exit_price"]) / trow["entry_price"] - 1) * 100
-                    ecol3.metric("증감률", fmt_pct(pct))
+            _render_history_card(trow, exits_df, key_prefix="main", compact=False)
 
 try:
     # ================================================================
