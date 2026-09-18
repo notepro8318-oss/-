@@ -1,0 +1,33 @@
+name: Screening Check
+
+on:
+  schedule:
+    # 평일 21:30 UTC — 미국 정규장(4:00pm ET) 마감 직후
+    # (서머타임 EDT 기준 +1.5h, 표준시 EST 기준 +0.5h로 어느 쪽이든 마감 이후)
+    - cron: "30 21 * * 1-5"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  screening-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r topdown-strategy/quant_system/requirements.txt
+
+      - name: Run screening and send Telegram alert on changes
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          SCREENING_CAPITAL_USD: ${{ vars.SCREENING_CAPITAL_USD }}
+        working-directory: topdown-strategy/quant_system
+        run: python screening_notify.py
