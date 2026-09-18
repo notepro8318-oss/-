@@ -1,0 +1,2 @@
+id,trade_id,ticker,date,type,price,suggested_shares,confirmed,note
+218cedb00f28,1a45caeb7043,TGT,2026-09-17,TP1,132.0,0,False,TP1 익절 (+10%)
