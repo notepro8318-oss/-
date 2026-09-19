@@ -18,6 +18,7 @@ import os
 
 from qs_config import (
     BENCHMARK, SECTOR_ETFS, SECTOR_STOCKS, TOP_STOCK_COUNT, INITIAL_EQUITY,
+    DEFAULT_SIDEWAYS_MODE, SIDEWAYS_MODE_DEFENSIVE,
 )
 from data import fetch_ohlcv
 from regime import MarketRegimeDetector
@@ -35,10 +36,11 @@ V2_RISK_PCT = 0.03
 V2_POSITION_CAP_PCT = 0.40
 
 
-def compute_screening_snapshot(capital: float = INITIAL_EQUITY) -> dict:
+def compute_screening_snapshot(capital: float = INITIAL_EQUITY,
+                                sideways_mode: str = DEFAULT_SIDEWAYS_MODE) -> dict:
     """Module1~4를 실행해 오늘의 국면/주도섹터/매수후보 스냅샷 dict를 만든다."""
     regime_detector = MarketRegimeDetector()
-    sector_engine = SectorRotationEngine()
+    sector_engine = SectorRotationEngine(sideways_mode=sideways_mode)
     ranker = MomentumRanker(top_n=TOP_STOCK_COUNT)
     execution = ExecutionEngine()
     risk_manager = RiskManager(risk_pct=V2_RISK_PCT, cap_pct=V2_POSITION_CAP_PCT)
@@ -50,6 +52,7 @@ def compute_screening_snapshot(capital: float = INITIAL_EQUITY) -> dict:
     result = {
         "date": str(snap_regime["date"].date()),
         "regime": regime,
+        "sideways_mode": sideways_mode,
         "leaders": [],
         "candidates": [],
     }
@@ -132,6 +135,11 @@ def save_snapshot(snapshot: dict, message: str = "Update screening snapshot") ->
 def diff_snapshots(old: dict | None, new: dict) -> list[str]:
     """직전 스냅샷과 비교해 사람이 읽을 수 있는 변경 사항 목록을 만든다."""
     changes: list[str] = []
+
+    # 스냅샷에 sideways_mode가 없던 시절(방어섹터 전용)의 기록은 DEFENSIVE로 간주한다.
+    old_mode = (old.get("sideways_mode") or SIDEWAYS_MODE_DEFENSIVE) if old else None
+    if old_mode and old_mode != new.get("sideways_mode"):
+        changes.append(f"SIDEWAYS 섹터 선정 방식 변경: {old_mode} → {new.get('sideways_mode')}")
 
     old_regime = old.get("regime") if old else None
     if old_regime != new["regime"]:

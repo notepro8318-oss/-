@@ -25,6 +25,7 @@ from qs_config import (
     STOCK_MA_LONG, LOOKBACK_52W, MRS_LOOKBACK, MOM_12_1_START,
     TOP_STOCK_COUNT, TP1_PCT, TP1_FRACTION, TP2_PCT, TP2_FRACTION,
     IDLE_CASH_FALLBACK_ENABLED, IDLE_CASH_THRESHOLD_PCT, FALLBACK_INDEX_TICKER,
+    DEFAULT_SIDEWAYS_MODE,
 )
 from data import fetch_ohlcv
 from regime import MarketRegimeDetector
@@ -73,13 +74,16 @@ class TopDownBacktesterV2:
     def __init__(self, years: int = 3, initial_equity: float = INITIAL_EQUITY,
                  cost_bps: float = COST_BPS, max_positions: int = TOP_STOCK_COUNT,
                  risk_pct: float = 0.03, position_cap_pct: float = 0.40,
-                 sizing_mode: str = "risk_atr") -> None:
+                 sizing_mode: str = "risk_atr",
+                 sideways_mode: str = DEFAULT_SIDEWAYS_MODE) -> None:
         """
         sizing_mode : {"risk_atr", "equal", "composite_score"}
             - "risk_atr": 기존 방식. RiskManager의 고정비율 리스크(ATR 손절폭 기반) 사이징.
             - "equal": 매수 후보 max_positions개에 자본을 동일 비중(1/N)으로 배분.
             - "composite_score": CompositeScore가 좋을수록(낮을수록) 더 큰 비중을 배분
               (가중치 ∝ 1/CompositeScore, 그 주 후보군 내에서 정규화).
+        sideways_mode : {"HYBRID"(C안, 기본), "DEFENSIVE"(A안)}
+            SIDEWAYS 국면의 주도 섹터 선정 방식 (qs_config.SIDEWAYS_MODES 참고).
         두 경우 모두 손절/분할익절/Runner 청산 로직은 동일하게 ATR 기반을 사용하고,
         "진입 수량(비중)"만 다르게 계산한다.
         """
@@ -90,7 +94,7 @@ class TopDownBacktesterV2:
         self.sizing_mode = sizing_mode
 
         self.regime_detector = MarketRegimeDetector()
-        self.sector_engine = SectorRotationEngine()
+        self.sector_engine = SectorRotationEngine(sideways_mode=sideways_mode)
         self.ranker = MomentumRanker(top_n=max_positions)
         self.execution = ExecutionEngine()
         self.risk_manager = RiskManager(risk_pct=risk_pct, cap_pct=position_cap_pct)

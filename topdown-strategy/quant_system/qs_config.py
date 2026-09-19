@@ -29,6 +29,17 @@ MAX_POSITIONS_BULL = 5
 # ------------------------------------------------------------------
 SECTOR_ETFS = ["XLK", "XLC", "XLF", "XLI", "XLE", "XLY", "XLP", "XLV", "XLU", "XLRE", "XLB"]
 DEFENSIVE_ETFS = ["XLU", "XLP", "XLV", "XLF"]
+OFFENSIVE_ETFS = [e for e in SECTOR_ETFS if e not in DEFENSIVE_ETFS]
+
+# SIDEWAYS 국면의 주도 섹터 선정 방식
+#   "DEFENSIVE" (A안): 방어적 섹터 4개 안에서만 상위 TOP_SECTOR_COUNT개 선정 (기존 방식)
+#   "HYBRID"    (C안): 방어적 섹터 1개 + 공격적 섹터 1개 (TOP_SECTOR_COUNT=2 기준)
+# 10년 백테스트(2016-09~2026-09): A CAGR +10.2%/MDD -19.3%/Sharpe 1.01,
+#                                  C CAGR +12.9%/MDD -21.3%/Sharpe 1.15
+SIDEWAYS_MODE_DEFENSIVE = "DEFENSIVE"
+SIDEWAYS_MODE_HYBRID = "HYBRID"
+SIDEWAYS_MODES = (SIDEWAYS_MODE_HYBRID, SIDEWAYS_MODE_DEFENSIVE)
+DEFAULT_SIDEWAYS_MODE = SIDEWAYS_MODE_HYBRID
 
 ROC_SHORT = 5     # 1주(5거래일)
 ROC_LONG = 21     # 1개월(21거래일)

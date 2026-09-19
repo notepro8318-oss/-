@@ -29,5 +29,6 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           SCREENING_CAPITAL_USD: ${{ vars.SCREENING_CAPITAL_USD }}
+          SIDEWAYS_SECTOR_MODE: ${{ vars.SIDEWAYS_SECTOR_MODE }}
         working-directory: topdown-strategy/quant_system
         run: python screening_notify.py

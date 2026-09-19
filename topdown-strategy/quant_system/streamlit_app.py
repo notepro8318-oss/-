@@ -30,7 +30,8 @@ import pandas as pd
 import streamlit as st
 
 from qs_config import (
-    BENCHMARK, SECTOR_ETFS, DEFENSIVE_ETFS, SECTOR_STOCKS,
+    BENCHMARK, SECTOR_ETFS, DEFENSIVE_ETFS, OFFENSIVE_ETFS, SECTOR_STOCKS,
+    SIDEWAYS_MODE_DEFENSIVE, SIDEWAYS_MODE_HYBRID, DEFAULT_SIDEWAYS_MODE,
     ROC_SHORT, ROC_LONG, TOP_SECTOR_COUNT, TOP_STOCK_COUNT,
     STOP_ATR_MULT_V2, TP1_PCT, TP1_FRACTION, TP2_PCT, TP2_FRACTION, RUNNER_EXIT_MA_PERIOD,
     IDLE_CASH_FALLBACK_ENABLED, FALLBACK_INDEX_TICKER,
@@ -417,6 +418,21 @@ with st.sidebar:
         capital = _parse_comma(st.session_state["capital_usd_text"])
         st.caption(f"1회 진입 리스크: 자본의 {V2_RISK_PCT*100:.0f}% · 단일종목 상한: 자본의 {V2_POSITION_CAP_PCT*100:.0f}%")
 
+        _mode_labels = {
+            SIDEWAYS_MODE_HYBRID: "C안 · 방어 1 + 공격 1 (기본)",
+            SIDEWAYS_MODE_DEFENSIVE: "A안 · 방어섹터 전용",
+        }
+        sideways_mode = st.radio(
+            "SIDEWAYS 국면 섹터 선정 방식",
+            options=list(_mode_labels.keys()),
+            index=list(_mode_labels.keys()).index(DEFAULT_SIDEWAYS_MODE),
+            format_func=lambda m: _mode_labels[m],
+            key="sideways_mode",
+            help="SIDEWAYS(횡보) 국면에서 주도 섹터를 고르는 방식입니다. "
+                 "C안은 방어 섹터 1개 + 공격 섹터 1개, A안은 방어 섹터(XLU/XLP/XLV/XLF)에서만 고릅니다. "
+                 "10년 백테스트: C안 CAGR +12.9%·MDD -21.3%·Sharpe 1.15 / A안 CAGR +10.2%·MDD -19.3%·Sharpe 1.01.",
+        )
+
         if st.button("🔄 시그널 새로고침", use_container_width=True):
             st.cache_data.clear()
             st.rerun()
@@ -556,17 +572,24 @@ try:
     st.header("2️⃣ 섹터 로테이션 (SectorRotationEngine)", divider="gray")
     st.caption(f"1주({ROC_SHORT}거래일)/1개월({ROC_LONG}거래일) 수익률 순위를 0.3:0.7로 가중해 "
                f"Score_Rank가 가장 낮은(우수) 상위 {TOP_SECTOR_COUNT}개 섹터를 주도 섹터로 선정합니다.")
+    if sideways_mode == SIDEWAYS_MODE_HYBRID:
+        sideways_label = "C안"
+        sideways_desc = (f"방어적 섹터({', '.join(DEFENSIVE_ETFS)}) 중 Score_Rank 1위 + "
+                         f"공격적 섹터({', '.join(OFFENSIVE_ETFS)}) 중 Score_Rank 1위")
+    else:
+        sideways_label = "A안"
+        sideways_desc = f"방어적 섹터({', '.join(DEFENSIVE_ETFS)}) 4개 중 Score_Rank 상위 {TOP_SECTOR_COUNT}개"
     with st.expander("📋 조건 상세보기"):
         st.markdown(f"""
 - **BULL**: GICS 11개 섹터 ETF 전체 중 Score_Rank 상위 {TOP_SECTOR_COUNT}개
-- **SIDEWAYS**: 방어적 섹터({', '.join(DEFENSIVE_ETFS)}) 4개 중 Score_Rank 상위 {TOP_SECTOR_COUNT}개
+- **SIDEWAYS** ({sideways_label}): {sideways_desc}
 - **BEAR**: 섹터 미선정 (Cash 100%)
 - Score_Rank = 0.3 × Rank(1주 수익률) + 0.7 × Rank(1개월 수익률) — 낮을수록 우수
 """)
 
     with st.spinner("섹터 ETF 스코어 계산 중..."):
         scored, sector_price_data = load_sector_scores()
-        leaders = sector_engine.select_leading_sectors(sector_price_data, regime)
+        leaders = SectorRotationEngine(sideways_mode=sideways_mode).select_leading_sectors(sector_price_data, regime)
 
     if leaders:
         st.write(" ".join(f"🏆 **{t}**" for t in leaders))
@@ -582,13 +605,25 @@ try:
         })
         return disp.style.format({"ROC 1주": "{:+.2%}", "ROC 1개월": "{:+.2%}", "Score_Rank": "{:.2f}"})
 
-    if regime == "SIDEWAYS":
-        # SIDEWAYS는 방어적 섹터 4개 안에서만 다시 순위를 매겨 선정하므로,
+    if regime == "SIDEWAYS" and sideways_mode == SIDEWAYS_MODE_HYBRID:
+        # C안: 방어 그룹과 공격 그룹 각각에서 1위를 뽑으므로, 선정에 쓰인 그룹별 순위표를 나눠 보여준다.
+        defensive_data = {t: sector_price_data[t] for t in DEFENSIVE_ETFS if t in sector_price_data}
+        offensive_data = {t: sector_price_data[t] for t in OFFENSIVE_ETFS if t in sector_price_data}
+        st.caption("〰️ 현재 SIDEWAYS 국면 · C안: 방어 그룹 1위 + 공격 그룹 1위를 주도 섹터로 선정합니다. "
+                   "아래는 그룹별 실제 선정용 순위표입니다.")
+        st.markdown("**방어 그룹** (" + ", ".join(DEFENSIVE_ETFS) + ")")
+        st.dataframe(_format_score_table(sector_engine.score_sectors(defensive_data)), use_container_width=True)
+        st.markdown("**공격 그룹** (" + ", ".join(OFFENSIVE_ETFS) + ")")
+        st.dataframe(_format_score_table(sector_engine.score_sectors(offensive_data)), use_container_width=True)
+        with st.expander("전체 11개 섹터 기준 순위표 보기 (참고용 — SIDEWAYS 선정에는 미사용)"):
+            st.dataframe(_format_score_table(scored), use_container_width=True)
+    elif regime == "SIDEWAYS":
+        # A안: SIDEWAYS는 방어적 섹터 4개 안에서만 다시 순위를 매겨 선정하므로,
         # 전체 11개 기준 표를 그대로 보여주면 "1등인데 왜 안 뽑혔지?"로 오해하기 쉽다.
         # 실제 선정에 쓰인 것과 동일한(방어적 섹터로 제한된) 순위표를 보여준다.
         defensive_data = {t: sector_price_data[t] for t in DEFENSIVE_ETFS if t in sector_price_data}
         scored_defensive = sector_engine.score_sectors(defensive_data)
-        st.caption(f"⚠️ 현재 SIDEWAYS 국면이라 방어적 섹터({', '.join(DEFENSIVE_ETFS)}) 4개 안에서만 "
+        st.caption(f"⚠️ 현재 SIDEWAYS 국면 · A안이라 방어적 섹터({', '.join(DEFENSIVE_ETFS)}) 4개 안에서만 "
                    "다시 순위를 매겨 선정합니다. 아래는 그 4개 기준 실제 선정용 순위표입니다.")
         st.dataframe(_format_score_table(scored_defensive), use_container_width=True)
         with st.expander("전체 11개 섹터 기준 순위표 보기 (참고용 — SIDEWAYS 선정에는 미사용)"):
@@ -710,7 +745,11 @@ except Exception as e:
 st.header("📈 백테스트 (TopDownBacktesterV2)", divider="gray")
 st.caption(f"전체 유니버스(벤치마크+섹터ETF 11개+대표종목 ~{sum(len(v) for v in SECTOR_STOCKS.values())}개) 다운로드로 "
            "수 분 정도 걸릴 수 있습니다. 포지션 비중은 CompositeScore 비례배분. "
-           "검증 결과: 3년 기준 CAGR +16.39% · MDD -13.86% · Sharpe 1.13 · 승률 63.6%.")
+           "SIDEWAYS 섹터 선정 방식은 사이드바 '스크리닝' 탭에서 선택합니다. "
+           "10년 검증(2016년 9월부터 2026년 9월까지, 종목풀 생존편향 있음): "
+           "C안 CAGR +12.9% · MDD -21.3% · Sharpe 1.15 / A안 CAGR +10.2% · MDD -19.3% · Sharpe 1.01 "
+           "(참고: SPY 보유 CAGR +15.4% · MDD -33.7% · Sharpe 0.89). "
+           "구간에 따라 성과 편차가 크니(3년 롤링 평균 CAGR C안 +8.2%, A안 +5.8%) 상대 비교용으로 참고하세요.")
 
 with st.expander("▶ 백테스트 실행하기"):
     bt_years = st.slider("백테스트 기간(년)", min_value=1, max_value=5, value=BACKTEST_YEARS)
@@ -723,7 +762,8 @@ with st.expander("▶ 백테스트 실행하기"):
             try:
                 bt = TopDownBacktesterV2(years=bt_years, initial_equity=capital,
                                           risk_pct=V2_RISK_PCT, position_cap_pct=V2_POSITION_CAP_PCT,
-                                          sizing_mode="composite_score")
+                                          sizing_mode="composite_score",
+                                          sideways_mode=sideways_mode)
                 stats = bt.run()
             except Exception as e:
                 st.error(f"백테스트 실행 중 오류: {e}")

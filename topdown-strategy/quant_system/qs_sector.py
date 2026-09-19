@@ -10,8 +10,9 @@ from __future__ import annotations
 import pandas as pd
 
 from qs_config import (
-    SECTOR_ETFS, DEFENSIVE_ETFS, ROC_SHORT, ROC_LONG,
+    SECTOR_ETFS, DEFENSIVE_ETFS, OFFENSIVE_ETFS, ROC_SHORT, ROC_LONG,
     RANK_WEIGHT_SHORT, RANK_WEIGHT_LONG, TOP_SECTOR_COUNT,
+    SIDEWAYS_MODES, SIDEWAYS_MODE_DEFENSIVE, DEFAULT_SIDEWAYS_MODE,
 )
 from data import fetch_ohlcv
 
@@ -22,9 +23,14 @@ class SectorRotationEngine:
     def __init__(self, etfs: list[str] = None, defensive_etfs: list[str] = None,
                  roc_short: int = ROC_SHORT, roc_long: int = ROC_LONG,
                  w_short: float = RANK_WEIGHT_SHORT, w_long: float = RANK_WEIGHT_LONG,
-                 top_n: int = TOP_SECTOR_COUNT) -> None:
+                 top_n: int = TOP_SECTOR_COUNT,
+                 sideways_mode: str = DEFAULT_SIDEWAYS_MODE) -> None:
+        if sideways_mode not in SIDEWAYS_MODES:
+            raise ValueError(f"sideways_mode must be one of {SIDEWAYS_MODES}, got {sideways_mode!r}")
+        self.sideways_mode = sideways_mode
         self.etfs = etfs or SECTOR_ETFS
         self.defensive_etfs = defensive_etfs or DEFENSIVE_ETFS
+        self.offensive_etfs = [e for e in self.etfs if e not in self.defensive_etfs] or OFFENSIVE_ETFS
         self.roc_short = roc_short
         self.roc_long = roc_long
         self.w_short = w_short
@@ -72,19 +78,30 @@ class SectorRotationEngine:
         """국면에 따라 주도 섹터를 선정한다.
 
         - BULL: 전체 11개 ETF 중 Score_Rank 상위 top_n
-        - SIDEWAYS: 방어적 섹터 4개 중 Score_Rank 상위 top_n
+        - SIDEWAYS:
+            - "DEFENSIVE"(A안): 방어적 섹터 4개 중 Score_Rank 상위 top_n
+            - "HYBRID"(C안): 방어적 섹터 상위 (top_n - top_n//2)개 + 공격적 섹터 상위 top_n//2개
+              (top_n=2면 방어 1 + 공격 1)
         - BEAR: 빈 리스트(Cash 100%)
         """
         if regime == "BEAR":
             return []
 
         if regime == "SIDEWAYS":
-            universe = {t: price_data[t] for t in self.defensive_etfs if t in price_data}
-        else:  # BULL (및 그 외 안전 기본값)
-            universe = price_data
+            defensive = {t: price_data[t] for t in self.defensive_etfs if t in price_data}
+            if self.sideways_mode == SIDEWAYS_MODE_DEFENSIVE:
+                return self.score_sectors(defensive).head(self.top_n).index.tolist()
 
-        scored = self.score_sectors(universe)
-        return scored.head(self.top_n).index.tolist()
+            n_off = self.top_n // 2
+            n_def = self.top_n - n_off
+            offensive = {t: price_data[t] for t in self.offensive_etfs if t in price_data}
+            picks = self.score_sectors(defensive).head(n_def).index.tolist()
+            if offensive:
+                picks += self.score_sectors(offensive).head(n_off).index.tolist()
+            return picks
+
+        # BULL (및 그 외 안전 기본값)
+        return self.score_sectors(price_data).head(self.top_n).index.tolist()
 
 
 if __name__ == "__main__":

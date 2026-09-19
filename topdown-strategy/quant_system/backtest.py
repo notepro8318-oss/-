@@ -15,7 +15,7 @@ import pandas as pd
 
 from qs_config import (
     SECTOR_ETFS, SECTOR_STOCKS, BENCHMARK, COST_BPS, INITIAL_EQUITY,
-    MAX_POSITIONS_BULL, STOCK_MA_LONG, LOOKBACK_52W, MRS_LOOKBACK,
+    MAX_POSITIONS_BULL, STOCK_MA_LONG, LOOKBACK_52W, MRS_LOOKBACK, SIDEWAYS_MODE_DEFENSIVE,
 )
 from data import fetch_ohlcv
 from regime import MarketRegimeDetector
@@ -61,7 +61,7 @@ class TopDownBacktester:
         self.max_positions = max_positions
 
         self.regime_detector = MarketRegimeDetector()
-        self.sector_engine = SectorRotationEngine()
+        self.sector_engine = SectorRotationEngine(sideways_mode=SIDEWAYS_MODE_DEFENSIVE)
         self.screener = StockScreener()
         self.execution = ExecutionEngine()
         self.risk_manager = RiskManager()

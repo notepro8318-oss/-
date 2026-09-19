@@ -8,6 +8,7 @@ screening.compute_screening_snapshot()로 오늘의 매수 후보(종목/진입�
 - GITHUB_TOKEN: contents 쓰기 권한 있는 PAT (screening.py의 github_store.py가 사용)
 - TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID: 알림 발송용
 - SCREENING_CAPITAL_USD (선택, repo Variable): 수량 계산에 쓸 자본금. 미설정 시 기본 자본금(qs_config.INITIAL_EQUITY) 사용.
+- SIDEWAYS_SECTOR_MODE (선택, repo Variable): "HYBRID"(C안, 기본) 또는 "DEFENSIVE"(A안, 방어섹터 전용).
 """
 
 from __future__ import annotations
@@ -16,7 +17,7 @@ import os
 
 import requests
 
-from qs_config import INITIAL_EQUITY
+from qs_config import INITIAL_EQUITY, DEFAULT_SIDEWAYS_MODE, SIDEWAYS_MODES
 from screening import compute_screening_snapshot, load_snapshot, save_snapshot, diff_snapshots
 
 
@@ -38,7 +39,8 @@ def send_telegram_message(text: str) -> bool:
 
 
 def format_message(snapshot: dict, changes: list[str]) -> str:
-    lines = [f"📊 *스크리닝 결과* ({snapshot['date']}) — 국면: {snapshot['regime']}"]
+    lines = [f"📊 *스크리닝 결과* ({snapshot['date']}) — 국면: {snapshot['regime']} "
+             f"(SIDEWAYS 섹터: {snapshot.get('sideways_mode', '-')})"]
     if snapshot["leaders"]:
         lines.append(f"주도 섹터: {', '.join(snapshot['leaders'])}")
     lines.append("")
@@ -57,7 +59,11 @@ def format_message(snapshot: dict, changes: list[str]) -> str:
 
 def main() -> None:
     capital = float(os.environ.get("SCREENING_CAPITAL_USD") or INITIAL_EQUITY)
-    new_snapshot = compute_screening_snapshot(capital)
+    mode = (os.environ.get("SIDEWAYS_SECTOR_MODE") or DEFAULT_SIDEWAYS_MODE).strip().upper()
+    if mode not in SIDEWAYS_MODES:
+        print(f"알 수 없는 SIDEWAYS_SECTOR_MODE={mode!r} - 기본값 {DEFAULT_SIDEWAYS_MODE} 사용")
+        mode = DEFAULT_SIDEWAYS_MODE
+    new_snapshot = compute_screening_snapshot(capital, sideways_mode=mode)
     old_snapshot = load_snapshot()
     changes = diff_snapshots(old_snapshot, new_snapshot)
 

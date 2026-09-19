@@ -15,6 +15,8 @@ v1(AND 하드필터 + 눌림목/돌파 타이밍 대기)에서 v2(Cross-Sectiona
 ---------
     python system.py scan        # 오늘자 매수 후보 스캔
     python system.py backtest    # 3년 백테스트 실행 및 성과 리포트 출력
+    python system.py scan --sideways-mode DEFENSIVE   # SIDEWAYS 섹터 선정을 A안(방어섹터 전용)으로
+                                                       # (기본 HYBRID = C안: 방어 1 + 공격 1)
 """
 
 from __future__ import annotations
@@ -24,6 +26,7 @@ import sys
 from qs_config import (
     SECTOR_STOCKS, INITIAL_EQUITY, BENCHMARK, SECTOR_ETFS,
     TOP_STOCK_COUNT, IDLE_CASH_FALLBACK_ENABLED, FALLBACK_INDEX_TICKER,
+    DEFAULT_SIDEWAYS_MODE, SIDEWAYS_MODES,
 )
 from data import fetch_ohlcv
 from regime import MarketRegimeDetector
@@ -41,10 +44,12 @@ V2_POSITION_CAP_PCT = 0.40
 class TopDownQuantSystem:
     """탑다운 전략(v2: 모멘텀 랭킹 + Runner)의 일일 스캔/백테스트를 총괄하는 파사드 클래스."""
 
-    def __init__(self, capital: float = INITIAL_EQUITY) -> None:
+    def __init__(self, capital: float = INITIAL_EQUITY,
+                 sideways_mode: str = DEFAULT_SIDEWAYS_MODE) -> None:
         self.capital = capital
+        self.sideways_mode = sideways_mode
         self.regime_detector = MarketRegimeDetector()
-        self.sector_engine = SectorRotationEngine()
+        self.sector_engine = SectorRotationEngine(sideways_mode=sideways_mode)
         self.ranker = MomentumRanker(top_n=TOP_STOCK_COUNT)
         self.execution = ExecutionEngine()
         self.risk_manager = RiskManager(risk_pct=V2_RISK_PCT, cap_pct=V2_POSITION_CAP_PCT)
@@ -130,15 +135,24 @@ class TopDownQuantSystem:
         """3년(기본) 백테스트를 실행하고 성과 dict를 반환한다."""
         bt = TopDownBacktesterV2(years=years, initial_equity=self.capital,
                                   risk_pct=V2_RISK_PCT, position_cap_pct=V2_POSITION_CAP_PCT,
-                                  sizing_mode="composite_score")
+                                  sizing_mode="composite_score",
+                                  sideways_mode=self.sideways_mode)
         stats = bt.run()
         bt.print_report()
         return stats
 
 
 if __name__ == "__main__":
-    mode = sys.argv[1] if len(sys.argv) > 1 else "scan"
-    system = TopDownQuantSystem()
+    args = sys.argv[1:]
+    sideways_mode = DEFAULT_SIDEWAYS_MODE
+    if "--sideways-mode" in args:
+        i = args.index("--sideways-mode")
+        sideways_mode = args[i + 1].upper() if i + 1 < len(args) else ""
+        if sideways_mode not in SIDEWAYS_MODES:
+            sys.exit(f"--sideways-mode must be one of {SIDEWAYS_MODES}")
+        del args[i:i + 2]
+    mode = args[0] if args else "scan"
+    system = TopDownQuantSystem(sideways_mode=sideways_mode)
 
     if mode == "backtest":
         system.run_backtest(years=3)
