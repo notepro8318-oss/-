@@ -26,8 +26,25 @@ from datetime import datetime
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import importlib
+import sys
+from pathlib import Path
+
 import pandas as pd
 import streamlit as st
+
+# Streamlit Cloud는 새 커밋을 pull해도 프로세스를 재시작하지 않고 스크립트만 재실행한다.
+# 이때 sys.modules에 남아 있는 옛 버전의 로컬 모듈(qs_config 등)이 그대로 쓰이면
+# 새로 추가된 이름을 import하다 ImportError가 난다. 소스 파일이 바뀌었으면
+# 의존 순서대로 로컬 모듈을 다시 불러온다.
+_LOCAL_MODULES = ["qs_config", "data", "regime", "qs_sector", "screener", "execution",
+                  "risk", "github_store", "journal", "backtest_v2", "screening"]
+_src_sig = tuple(sorted((p.name, p.stat().st_mtime_ns) for p in Path(__file__).parent.glob("*.py")))
+if getattr(sys, "_qs_src_sig", None) != _src_sig:
+    for _name in _LOCAL_MODULES:
+        if _name in sys.modules:
+            importlib.reload(sys.modules[_name])
+    sys._qs_src_sig = _src_sig
 
 from qs_config import (
     BENCHMARK, SECTOR_ETFS, DEFENSIVE_ETFS, OFFENSIVE_ETFS, SECTOR_STOCKS,
