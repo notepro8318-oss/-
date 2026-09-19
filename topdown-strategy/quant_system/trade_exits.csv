@@ -1,2 +1,1 @@
 id,trade_id,date,price,shares,memo
-45ececf1d4a4,7c777d94d4da,2026-09-18,120.0,10,구버전(매도가격 필드)에서 마이그레이션
