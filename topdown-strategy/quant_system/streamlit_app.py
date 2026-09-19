@@ -441,8 +441,8 @@ with st.sidebar:
         st.caption(f"1회 진입 리스크: 자본의 {V2_RISK_PCT*100:.0f}% · 단일종목 상한: 자본의 {V2_POSITION_CAP_PCT*100:.0f}%")
 
         _mode_labels = {
-            SIDEWAYS_MODE_HYBRID: "C안 · 방어 1 + 공격 1 (기본)",
-            SIDEWAYS_MODE_DEFENSIVE: "A안 · 방어섹터 전용",
+            SIDEWAYS_MODE_HYBRID: "혼합형 (기본)",
+            SIDEWAYS_MODE_DEFENSIVE: "방어형",
         }
         sideways_mode = st.radio(
             "SIDEWAYS 국면 섹터 선정 방식",
@@ -452,8 +452,8 @@ with st.sidebar:
             key="sideways_mode",
             disabled=current_regime in ("BULL", "BEAR"),
             help="SIDEWAYS(횡보) 국면에서 주도 섹터를 고르는 방식입니다. "
-                 "C안은 방어 섹터 1개 + 공격 섹터 1개, A안은 방어 섹터(XLU/XLP/XLV/XLF)에서만 고릅니다. "
-                 "10년 백테스트: C안 CAGR +12.9%·MDD -21.3%·Sharpe 1.15 / A안 CAGR +10.2%·MDD -19.3%·Sharpe 1.01.",
+                 "혼합형은 방어 섹터 1개 + 공격 섹터 1개, 방어형은 방어 섹터(XLU/XLP/XLV/XLF)에서만 고릅니다. "
+                 "10년 백테스트: 혼합형 CAGR +12.9%·MDD -21.3%·Sharpe 1.15 / 방어형 CAGR +10.2%·MDD -19.3%·Sharpe 1.01.",
         )
         if current_regime == "BULL":
             st.info("🔒 현재 시장 국면이 **BULL**이라 이 옵션은 적용되지 않습니다. "
@@ -605,11 +605,11 @@ try:
     st.caption(f"1주({ROC_SHORT}거래일)/1개월({ROC_LONG}거래일) 수익률 순위를 0.3:0.7로 가중해 "
                f"Score_Rank가 가장 낮은(우수) 상위 {TOP_SECTOR_COUNT}개 섹터를 주도 섹터로 선정합니다.")
     if sideways_mode == SIDEWAYS_MODE_HYBRID:
-        sideways_label = "C안"
+        sideways_label = "혼합형"
         sideways_desc = (f"방어적 섹터({', '.join(DEFENSIVE_ETFS)}) 중 Score_Rank 1위 + "
                          f"공격적 섹터({', '.join(OFFENSIVE_ETFS)}) 중 Score_Rank 1위")
     else:
-        sideways_label = "A안"
+        sideways_label = "방어형"
         sideways_desc = f"방어적 섹터({', '.join(DEFENSIVE_ETFS)}) 4개 중 Score_Rank 상위 {TOP_SECTOR_COUNT}개"
     with st.expander("📋 조건 상세보기"):
         st.markdown(f"""
@@ -638,10 +638,10 @@ try:
         return disp.style.format({"ROC 1주": "{:+.2%}", "ROC 1개월": "{:+.2%}", "Score_Rank": "{:.2f}"})
 
     if regime == "SIDEWAYS" and sideways_mode == SIDEWAYS_MODE_HYBRID:
-        # C안: 방어 그룹과 공격 그룹 각각에서 1위를 뽑으므로, 선정에 쓰인 그룹별 순위표를 나눠 보여준다.
+        # 혼합형: 방어 그룹과 공격 그룹 각각에서 1위를 뽑으므로, 선정에 쓰인 그룹별 순위표를 나눠 보여준다.
         defensive_data = {t: sector_price_data[t] for t in DEFENSIVE_ETFS if t in sector_price_data}
         offensive_data = {t: sector_price_data[t] for t in OFFENSIVE_ETFS if t in sector_price_data}
-        st.caption("〰️ 현재 SIDEWAYS 국면 · C안: 방어 그룹 1위 + 공격 그룹 1위를 주도 섹터로 선정합니다. "
+        st.caption("〰️ 현재 SIDEWAYS 국면 · 혼합형: 방어 그룹 1위 + 공격 그룹 1위를 주도 섹터로 선정합니다. "
                    "아래는 그룹별 실제 선정용 순위표입니다.")
         st.markdown("**방어 그룹** (" + ", ".join(DEFENSIVE_ETFS) + ")")
         st.dataframe(_format_score_table(sector_engine.score_sectors(defensive_data)), use_container_width=True)
@@ -650,12 +650,12 @@ try:
         with st.expander("전체 11개 섹터 기준 순위표 보기 (참고용 — SIDEWAYS 선정에는 미사용)"):
             st.dataframe(_format_score_table(scored), use_container_width=True)
     elif regime == "SIDEWAYS":
-        # A안: SIDEWAYS는 방어적 섹터 4개 안에서만 다시 순위를 매겨 선정하므로,
+        # 방어형: SIDEWAYS는 방어적 섹터 4개 안에서만 다시 순위를 매겨 선정하므로,
         # 전체 11개 기준 표를 그대로 보여주면 "1등인데 왜 안 뽑혔지?"로 오해하기 쉽다.
         # 실제 선정에 쓰인 것과 동일한(방어적 섹터로 제한된) 순위표를 보여준다.
         defensive_data = {t: sector_price_data[t] for t in DEFENSIVE_ETFS if t in sector_price_data}
         scored_defensive = sector_engine.score_sectors(defensive_data)
-        st.caption(f"⚠️ 현재 SIDEWAYS 국면 · A안이라 방어적 섹터({', '.join(DEFENSIVE_ETFS)}) 4개 안에서만 "
+        st.caption(f"⚠️ 현재 SIDEWAYS 국면 · 방어형이라 방어적 섹터({', '.join(DEFENSIVE_ETFS)}) 4개 안에서만 "
                    "다시 순위를 매겨 선정합니다. 아래는 그 4개 기준 실제 선정용 순위표입니다.")
         st.dataframe(_format_score_table(scored_defensive), use_container_width=True)
         with st.expander("전체 11개 섹터 기준 순위표 보기 (참고용 — SIDEWAYS 선정에는 미사용)"):
@@ -779,9 +779,9 @@ st.caption(f"전체 유니버스(벤치마크+섹터ETF 11개+대표종목 ~{sum
            "수 분 정도 걸릴 수 있습니다. 포지션 비중은 CompositeScore 비례배분. "
            "SIDEWAYS 섹터 선정 방식은 사이드바 '스크리닝' 탭에서 선택합니다. "
            "10년 검증(2016년 9월부터 2026년 9월까지, 종목풀 생존편향 있음): "
-           "C안 CAGR +12.9% · MDD -21.3% · Sharpe 1.15 / A안 CAGR +10.2% · MDD -19.3% · Sharpe 1.01 "
+           "혼합형 CAGR +12.9% · MDD -21.3% · Sharpe 1.15 / 방어형 CAGR +10.2% · MDD -19.3% · Sharpe 1.01 "
            "(참고: SPY 보유 CAGR +15.4% · MDD -33.7% · Sharpe 0.89). "
-           "구간에 따라 성과 편차가 크니(3년 롤링 평균 CAGR C안 +8.2%, A안 +5.8%) 상대 비교용으로 참고하세요.")
+           "구간에 따라 성과 편차가 크니(3년 롤링 평균 CAGR 혼합형 +8.2%, 방어형 +5.8%) 상대 비교용으로 참고하세요.")
 
 with st.expander("▶ 백테스트 실행하기"):
     bt_years = st.slider("백테스트 기간(년)", min_value=1, max_value=5, value=BACKTEST_YEARS)
