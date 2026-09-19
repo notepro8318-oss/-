@@ -276,6 +276,11 @@ def _render_history_card(hrow, exits_df, key_prefix: str, compact: bool = False)
 # ------------------------------------------------------------------
 usd_krw_rate = load_usd_krw_rate()
 
+try:
+    current_regime = load_regime(load_benchmark())["regime"]
+except Exception:
+    current_regime = None  # 조회 실패 시 옵션을 잠그지 않는다
+
 
 def _on_krw_change():
     raw = _parse_comma(st.session_state["capital_krw_text"])
@@ -445,10 +450,20 @@ with st.sidebar:
             index=list(_mode_labels.keys()).index(DEFAULT_SIDEWAYS_MODE),
             format_func=lambda m: _mode_labels[m],
             key="sideways_mode",
+            disabled=current_regime in ("BULL", "BEAR"),
             help="SIDEWAYS(횡보) 국면에서 주도 섹터를 고르는 방식입니다. "
                  "C안은 방어 섹터 1개 + 공격 섹터 1개, A안은 방어 섹터(XLU/XLP/XLV/XLF)에서만 고릅니다. "
                  "10년 백테스트: C안 CAGR +12.9%·MDD -21.3%·Sharpe 1.15 / A안 CAGR +10.2%·MDD -19.3%·Sharpe 1.01.",
         )
+        if current_regime == "BULL":
+            st.info("🔒 현재 시장 국면이 **BULL**이라 이 옵션은 적용되지 않습니다. "
+                    "BULL에서는 11개 전체 섹터 중 순위 상위 2개를 선정합니다. "
+                    "SIDEWAYS 국면으로 전환되면 선택할 수 있습니다.")
+        elif current_regime == "BEAR":
+            st.info("🔒 현재 시장 국면이 **BEAR**라 이 옵션은 적용되지 않습니다 (신규 매수 차단). "
+                    "SIDEWAYS 국면으로 전환되면 선택할 수 있습니다.")
+        elif current_regime == "SIDEWAYS":
+            st.caption("〰️ 현재 SIDEWAYS 국면 — 선택한 방식이 주도 섹터 선정에 적용됩니다.")
 
         if st.button("🔄 시그널 새로고침", use_container_width=True):
             st.cache_data.clear()
