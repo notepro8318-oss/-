@@ -166,6 +166,26 @@ def load_dashboard_metrics(ticker: str, entry_price: float, initial_stop: float,
     })
 
 
+@st.cache_data(ttl=CACHE_TTL, show_spinner=False)
+def load_spy_history(years: int):
+    """S&P 500 비교용 SPY 일봉 (분할/배당 조정 종가 = 총수익 기준)."""
+    return fetch_ohlcv(BENCHMARK, period=f"{years + 3}y")
+
+
+def _curve_stats(eq: pd.Series) -> dict:
+    """자산곡선의 총수익률/CAGR/연변동성/MDD/샤프를 백테스터와 같은 방식(252일)으로 계산한다."""
+    daily = eq.pct_change().dropna()
+    n_years = len(eq) / 252.0
+    vol = daily.std() * (252 ** 0.5)
+    return {
+        "total": (eq.iloc[-1] / eq.iloc[0] - 1) * 100,
+        "cagr": ((eq.iloc[-1] / eq.iloc[0]) ** (1 / n_years) - 1) * 100 if n_years > 0 else float("nan"),
+        "vol": vol * 100,
+        "mdd": (eq / eq.cummax() - 1).min() * 100,
+        "sharpe": (daily.mean() * 252) / vol if vol > 0 else float("nan"),
+    }
+
+
 def fmt_pct(v: float) -> str:
     return f"{v:+.2f}%" if v is not None else "N/A"
 
@@ -813,11 +833,36 @@ with st.expander("▶ 백테스트 실행하기"):
                      f"연환산 변동성 {stats['ann_vol_pct']:.2f}%")
 
             if not bt.equity_curve.empty:
+                eq = bt.equity_curve
+                spy_df = load_spy_history(bt_years)
+                spy_eq = None
+                if spy_df is not None and not spy_df.empty:
+                    spy_close = spy_df["Close"].reindex(eq.index).ffill().dropna()
+                    if len(spy_close) > 1:
+                        spy_eq = spy_close / spy_close.iloc[0] * eq.iloc[0]   # 같은 시작 자본으로 정규화
+
                 fig, ax = plt.subplots(figsize=(10, 4))
-                ax.plot(bt.equity_curve.index, bt.equity_curve.values, linewidth=1.5)
-                ax.set_title("Cumulative Equity Curve")
+                ax.plot(eq.index, eq.values, linewidth=1.6, label="Strategy")
+                if spy_eq is not None:
+                    ax.plot(spy_eq.index, spy_eq.values, linewidth=1.4, linestyle="--", color="tab:orange",
+                            label="S&P 500 (SPY, buy & hold)")
+                ax.set_title("Equity Curve: Strategy vs S&P 500")
                 ax.set_ylabel("Equity ($)")
                 ax.grid(alpha=0.3)
+                ax.legend(loc="upper left")
                 st.pyplot(fig)
+
+                if spy_eq is not None:
+                    a, b = _curve_stats(eq), _curve_stats(spy_eq)
+                    comp = pd.DataFrame({
+                        "전략": [f"{a['total']:+.1f}%", f"{a['cagr']:+.2f}%", f"{a['vol']:.2f}%",
+                                f"{a['mdd']:.2f}%", f"{a['sharpe']:.2f}"],
+                        "S&P 500 (SPY 보유)": [f"{b['total']:+.1f}%", f"{b['cagr']:+.2f}%", f"{b['vol']:.2f}%",
+                                              f"{b['mdd']:.2f}%", f"{b['sharpe']:.2f}"],
+                    }, index=["총 수익률", "CAGR", "연환산 변동성", "MDD", "샤프 비율"])
+                    st.dataframe(comp, use_container_width=True)
+                    st.caption("S&P 500은 SPY(분할·배당 조정 종가)를 같은 기간·같은 시작 자본으로 보유했을 때의 성과입니다.")
+                else:
+                    st.caption("S&P 500(SPY) 데이터를 불러오지 못해 전략 곡선만 표시합니다.")
 
 st.caption("⚠️ 본 대시보드는 투자 자문이 아니며 참고용입니다. 백테스트는 과거 데이터 기반이며 향후 수익을 보장하지 않습니다.")
