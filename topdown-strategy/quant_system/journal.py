@@ -27,7 +27,7 @@ from __future__ import annotations
 import io
 import os
 import uuid
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 import pandas as pd
 
@@ -175,18 +175,30 @@ def preview_entry(ticker: str, entry_date, entry_price: float) -> dict:
     entry_ts = pd.Timestamp(entry_date)
     ind = _execution.compute_indicators(df)
     valid_idx = ind.index[ind.index >= entry_ts]
-    if len(valid_idx) == 0:
-        return {"error": "매매일 이후 거래일 데이터가 없습니다 (미래 날짜이거나 데이터 지연일 수 있습니다)."}
-
-    entry_idx = valid_idx[0]
-    atr = ind.loc[entry_idx, "ATR14"]
-    if pd.isna(atr):
-        after = ind.loc[entry_idx:, "ATR14"].dropna()
-        if after.empty:
+    pending = len(valid_idx) == 0
+    if pending:
+        # 매매일 당일(장중/장마감 직후)에는 yfinance 일봉이 아직 없다. 실제 매수는 이미 일어났으므로
+        # 등록을 막지 않고 가장 최근 거래일의 ATR14로 손절가를 계산해 두면, 그 날짜의 봉이
+        # 생기는 시점부터 스캔이 자동으로 추적을 시작한다. (KST 사용자를 고려해 +1일까지 허용)
+        if entry_ts.date() > (datetime.now() + timedelta(days=1)).date():
+            return {"error": "매매일이 미래 날짜입니다. 실제 매수한 날짜를 선택해 주세요."}
+        atr_series = ind["ATR14"].dropna()
+        if atr_series.empty:
             return {"error": "ATR 계산에 필요한 데이터가 부족합니다."}
-        atr = float(after.iloc[0])
+        atr = float(atr_series.iloc[-1])
+        entry_idx = pd.Timestamp(pd.offsets.BDay().rollforward(entry_ts))  # 주말이면 다음 영업일
+        atr_as_of = ind.index[-1]
     else:
-        atr = float(atr)
+        entry_idx = valid_idx[0]
+        atr_as_of = entry_idx
+        atr = ind.loc[entry_idx, "ATR14"]
+        if pd.isna(atr):
+            after = ind.loc[entry_idx:, "ATR14"].dropna()
+            if after.empty:
+                return {"error": "ATR 계산에 필요한 데이터가 부족합니다."}
+            atr = float(after.iloc[0])
+        else:
+            atr = float(atr)
 
     initial_stop = entry_price - STOP_ATR_MULT_V2 * atr
     return {
@@ -195,6 +207,8 @@ def preview_entry(ticker: str, entry_date, entry_price: float) -> dict:
         "initial_stop": initial_stop,
         "tp1_price": entry_price * (1 + TP1_PCT),
         "tp2_price": entry_price * (1 + TP2_PCT),
+        "pending": pending,
+        "atr_as_of": atr_as_of,
     }
 
 

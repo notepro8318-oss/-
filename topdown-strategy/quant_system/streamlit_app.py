@@ -341,6 +341,9 @@ with st.sidebar:
                 else:
                     st.caption(f"ATR14: {preview['atr14']:.2f} · 손절가: {preview['initial_stop']:.2f} · "
                                f"TP1: {preview['tp1_price']:.2f} · TP2: {preview['tp2_price']:.2f}")
+                    if preview.get("pending"):
+                        st.info(f"매매일 시세가 아직 집계되지 않아 최근 거래일({preview['atr_as_of']:%Y-%m-%d}) "
+                                "기준 ATR14로 손절가를 계산했습니다. 등록 후 해당 일봉이 생기면 자동으로 추적이 시작됩니다.")
 
             if st.button("➕ 매매일지에 추가", type="primary", use_container_width=True, key="nj_submit"):
                 if not nj_ticker.strip() or nj_price <= 0 or nj_shares <= 0:
