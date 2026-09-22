@@ -1,50 +1,51 @@
 {
   "date": "2026-09-18",
   "regime": "SIDEWAYS",
+  "sideways_mode": "HYBRID",
   "leaders": [
     "XLF",
-    "XLV"
+    "XLK"
   ],
   "candidates": [
     {
-      "ticker": "TMO",
-      "sector": "XLV",
-      "entry_price": 651.45,
-      "stop": 612.78,
-      "weight_pct": 30.9,
-      "shares": 18
+      "ticker": "AMD",
+      "sector": "XLK",
+      "entry_price": 559.82,
+      "stop": 504.0,
+      "weight_pct": 41.4,
+      "shares": 29
     },
     {
-      "ticker": "JNJ",
-      "sector": "XLV",
-      "entry_price": 269.99,
-      "stop": 256.75,
-      "weight_pct": 20.6,
-      "shares": 30
+      "ticker": "AAPL",
+      "sector": "XLK",
+      "entry_price": 336.13,
+      "stop": 316.88,
+      "weight_pct": 26.9,
+      "shares": 32
     },
     {
-      "ticker": "MRK",
-      "sector": "XLV",
-      "entry_price": 146.87,
-      "stop": 139.88,
-      "weight_pct": 19.9,
-      "shares": 54
+      "ticker": "NVDA",
+      "sector": "XLK",
+      "entry_price": 222.27,
+      "stop": 207.48,
+      "weight_pct": 12.8,
+      "shares": 23
     },
     {
-      "ticker": "ABBV",
-      "sector": "XLV",
-      "entry_price": 263.96,
-      "stop": 250.09,
-      "weight_pct": 19.9,
-      "shares": 30
+      "ticker": "V",
+      "sector": "XLF",
+      "entry_price": 368.29,
+      "stop": 354.89,
+      "weight_pct": 9.6,
+      "shares": 10
     },
     {
-      "ticker": "LLY",
-      "sector": "XLV",
-      "entry_price": 1152.93,
-      "stop": 1089.18,
-      "weight_pct": 8.6,
-      "shares": 2
+      "ticker": "JPM",
+      "sector": "XLF",
+      "entry_price": 349.67,
+      "stop": 332.17,
+      "weight_pct": 9.3,
+      "shares": 10
     }
   ]
 }
