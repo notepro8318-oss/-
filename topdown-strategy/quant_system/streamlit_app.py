@@ -387,58 +387,8 @@ with st.sidebar:
 
         if trades_df.empty:
             st.caption("아직 등록된 포지션이 없습니다.")
-
-        for _, trow in open_trades.iterrows():
-            trade_id = trow["id"]
-            ticker = trow["ticker"]
-            pending = signals_df[(signals_df["trade_id"] == trade_id) & (~signals_df["confirmed"])] \
-                if not signals_df.empty else signals_df
-            bell = "🔔" if len(pending) > 0 else ""
-            phase_emoji = {"STAGE_0": "🟡", "STAGE_1": "🔵", "STAGE_2": "🟢"}.get(trow["phase"], "")
-            label = f"{phase_emoji}{bell} {ticker} · {trow['entry_date']}"
-
-            with st.expander(label):
-                st.caption(f"매수가 {trow['entry_price']:.2f} · 최초 {int(trow['initial_shares']):,}주 · "
-                           f"잔여 {int(trow['remaining_shares']):,}주" +
-                           (f" · {trow['memo']}" if _has_text(trow.get("memo")) else ""))
-
-                if st.button("📁 기록/삭제", key=f"del_{trade_id}", use_container_width=True):
-                    archive_trade(trade_id)
-                    st.cache_data.clear()
-                    st.rerun()
-
-                if len(pending) > 0:
-                    for _, sig in pending.iterrows():
-                        st.warning(f"🔔 **{SIGNAL_LABELS.get(sig['type'], sig['type'])}** "
-                                   f"({sig['date']}, {sig['price']:.2f}, {int(sig['suggested_shares']):,}주)")
-                        if st.button("✅ 체결 확인", key=f"confirm_{sig['id']}", use_container_width=True):
-                            confirm_signal(sig["id"])
-                            st.cache_data.clear()
-                            st.rerun()
-
-                metrics = load_dashboard_metrics(ticker, float(trow["entry_price"]), float(trow["initial_stop"]),
-                                                  float(trow["current_stop"]), trow["phase"])
-                if "error" in metrics:
-                    st.error(metrics["error"])
-                else:
-                    st.info(f"**{PHASE_LABELS.get(trow['phase'], trow['phase'])}**")
-                    st.write(f"현재가 **{metrics['last_close']:.2f}** · R배수 {metrics['r_multiple']:+.2f}R")
-                    st.write(f"손절가 {trow['current_stop']:.2f} (거리 {fmt_pct(metrics['dist_to_stop_pct'])})")
-                    if metrics["target_price"] is not None:
-                        st.write(f"{metrics['target_label']} 목표가 {metrics['target_price']:.2f} "
-                                 f"(거리 {fmt_pct(metrics['dist_to_target_pct'])})")
-                    else:
-                        st.write("Runner 모드 — MA50 이탈 시 잔여 물량 청산")
-
-        if not closed_trades.empty:
-            with st.expander(f"⚫ 종료된 포지션 ({len(closed_trades)}건)"):
-                for _, trow in closed_trades.iterrows():
-                    st.caption(f"{trow['ticker']} · {trow['entry_date']} 진입 {trow['entry_price']:.2f} · "
-                               f"{PHASE_LABELS.get(trow['phase'], trow['phase'])}")
-                    if st.button("📁 기록/삭제", key=f"del_closed_{trow['id']}"):
-                        archive_trade(trow["id"])
-                        st.cache_data.clear()
-                        st.rerun()
+        # 종목별 진행중/종료 목록은 메인 화면 '📓 매매일지 현황'에 동일하게 표시되므로
+        # 사이드바에서는 중복 표시하지 않는다.
 
     # ================================================================
     # 탭 2: 스크리닝 (자본금 설정)
