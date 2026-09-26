@@ -372,6 +372,8 @@ with st.sidebar:
         trades_df = load_trades()
         signals_df = load_signals()
         exits_df = load_exits()
+        if not trades_df.empty:
+            trades_df = trades_df.sort_values("entry_date", kind="stable").reset_index(drop=True)
         active_trades = trades_df[~trades_df["archived"]] if not trades_df.empty else trades_df
         open_trades = active_trades[active_trades["status"] == "OPEN"] if not active_trades.empty else active_trades
         closed_trades = active_trades[active_trades["status"] == "CLOSED"] if not active_trades.empty else active_trades
