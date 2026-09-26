@@ -11,41 +11,41 @@
       "ticker": "AMD",
       "sector": "XLK",
       "entry_price": 629.26,
-      "stop": 562.11,
-      "weight_pct": 48.8,
+      "stop": 562.09,
+      "weight_pct": 47.7,
       "shares": 30
     },
     {
       "ticker": "TMO",
       "sector": "XLV",
       "entry_price": 678.39,
-      "stop": 638.52,
-      "weight_pct": 18.1,
-      "shares": 10
-    },
-    {
-      "ticker": "MRK",
-      "sector": "XLV",
-      "entry_price": 147.98,
-      "stop": 140.25,
-      "weight_pct": 12.8,
-      "shares": 34
+      "stop": 639.95,
+      "weight_pct": 20.7,
+      "shares": 12
     },
     {
       "ticker": "AAPL",
       "sector": "XLK",
       "entry_price": 335.92,
       "stop": 318.18,
+      "weight_pct": 11.9,
+      "shares": 14
+    },
+    {
+      "ticker": "MRK",
+      "sector": "XLV",
+      "entry_price": 147.98,
+      "stop": 139.95,
       "weight_pct": 11.3,
-      "shares": 13
+      "shares": 30
     },
     {
       "ticker": "JNJ",
       "sector": "XLV",
       "entry_price": 270.68,
-      "stop": 257.75,
-      "weight_pct": 9.0,
-      "shares": 13
+      "stop": 257.87,
+      "weight_pct": 8.4,
+      "shares": 12
     }
   ]
 }
