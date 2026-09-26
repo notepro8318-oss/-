@@ -1,1 +1,5 @@
 id,trade_id,ticker,date,type,price,suggested_shares,confirmed,notified,note
+63e0dfef5243,02e9370952b2,HRMY,2026-09-17,TP1,29.9298,18,False,False,TP1 익절 (+10%)
+8f7469641e05,02e9370952b2,HRMY,2026-09-17,TP2,32.6507,18,False,False,TP2 익절 (+20%)
+f46f58eee70d,654bd30ebe64,MRVL,2026-09-17,TP1,84.7,2,False,False,TP1 익절 (+10%)
+3a0524ccc2b4,654bd30ebe64,MRVL,2026-09-17,TP2,92.4,2,False,False,TP2 익절 (+20%)
