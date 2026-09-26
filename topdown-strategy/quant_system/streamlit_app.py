@@ -200,6 +200,15 @@ def _stockanalysis_url(ticker: str) -> str:
     return f"https://stockanalysis.com/stocks/{ticker}/"
 
 
+_TICKER_TO_SECTOR = {t: etf for etf, tickers in SECTOR_STOCKS.items() for t in tickers}
+
+
+def _sector_of(ticker: str) -> str:
+    """전략 유니버스(SECTOR_STOCKS)에 있는 종목이면 소속 섹터ETF를, 직접 등록한
+    유니버스 밖 종목이면 '기타'를 반환한다."""
+    return _TICKER_TO_SECTOR.get(ticker.strip().upper(), "기타")
+
+
 def _fmt_comma(v) -> str:
     """숫자를 3자리마다 콤마를 넣은 문자열로 변환한다 (예: 1000000 -> '1,000,000')."""
     try:
@@ -462,6 +471,43 @@ if tab_journal.open:
     st.caption("사이드바 '매매일지' 탭에서 등록/조회한 포지션의 매수·매도 정보입니다. "
                "🔔 표시는 확인 대기 중인 신규 시그널입니다.")
 
+    # ---- 보유 현황 요약: 투자중(OPEN)인 종목 기준 총 투자금액/평가금액/수익률/섹터 비중 ----
+    if not open_trades.empty:
+        _summary_rows = []
+        for _, trow in open_trades.iterrows():
+            m = load_dashboard_metrics(trow["ticker"], float(trow["entry_price"]), float(trow["initial_stop"]),
+                                        float(trow["current_stop"]), trow["phase"])
+            last_close = m["last_close"] if "error" not in m else float(trow["entry_price"])
+            remaining = int(trow["remaining_shares"])
+            _summary_rows.append({
+                "ticker": trow["ticker"],
+                "sector": _sector_of(trow["ticker"]),
+                "cost_basis": float(trow["entry_price"]) * remaining,
+                "mkt_value": last_close * remaining,
+            })
+        summary_df = pd.DataFrame(_summary_rows)
+        total_cost = summary_df["cost_basis"].sum()
+        total_value = summary_df["mkt_value"].sum()
+        total_pnl = total_value - total_cost
+        total_pnl_pct = (total_pnl / total_cost * 100) if total_cost > 0 else 0.0
+
+        st.subheader("📊 보유 현황 요약 (진행중 포지션 기준)")
+        s1, s2, s3 = st.columns(3)
+        s1.metric("총 투자금액(매입원가)", f"${total_cost:,.0f}")
+        s2.metric("평가금액", f"${total_value:,.0f}")
+        s3.metric("평가손익", f"${total_pnl:+,.0f}", f"{total_pnl_pct:+.2f}%")
+
+        sector_alloc = summary_df.groupby("sector")["mkt_value"].sum().sort_values(ascending=False)
+        sector_pct = (sector_alloc / total_value * 100) if total_value > 0 else sector_alloc
+        alloc_df = pd.DataFrame({
+            "평가금액": sector_alloc.map(lambda v: f"${v:,.0f}"),
+            "비중": sector_pct.map(lambda v: f"{v:.1f}%"),
+        })
+        alloc_df.index.name = "섹터"
+        st.caption("섹터 비중 (평가금액 기준)")
+        st.dataframe(alloc_df, use_container_width=True)
+        st.divider()
+
     if trades_df.empty:
         st.info("아직 등록된 포지션이 없습니다. 좌측 사이드바 '📓 매매일지' 탭에서 종목을 등록해 보세요.")
     else:
@@ -543,13 +589,16 @@ if tab_journal.open:
             for _, trow in archived_trades.iterrows():
                 _render_history_card(trow, exits_df, key_prefix="main", compact=False)
 
-try:
-    # ================================================================
-    # Module 1: 시장 국면 판정
-    # ================================================================
-    st.header("1️⃣ 시장 국면 판정 (MarketRegimeDetector)", divider="gray")
-    with st.expander("📋 조건 상세보기"):
-        st.markdown(f"""
+if tab_screening.open:
+    # 1~4단계는 사이드바 '🔍 스크리닝' 화면과 동일한 내용이므로, 사이드바에서
+    # '📓 매매일지' 탭을 보는 중에는 표시하지 않는다.
+    try:
+        # ================================================================
+        # Module 1: 시장 국면 판정
+        # ================================================================
+        st.header("1️⃣ 시장 국면 판정 (MarketRegimeDetector)", divider="gray")
+        with st.expander("📋 조건 상세보기"):
+            st.markdown(f"""
 - **대상**: `{BENCHMARK}`
 - **BULL**: Close ≥ MA20×1.005 AND Slope5d(MA20) ≥ +0.05% AND Close ≥ MA200 — **2거래일 연속** 확인 시 확정
 - **BEAR**: Close ≤ MA20×0.995 AND Slope5d(MA20) ≤ −0.05% AND Close < MA200 — **2거래일 연속** 확인 시 확정
@@ -557,140 +606,140 @@ try:
 - **노출 비중**: BULL 100% · SIDEWAYS 40% · BEAR 0%(현금 보존, 신규매수 차단)
 """)
 
-    with st.spinner(f"{BENCHMARK} 데이터 조회 중..."):
-        bench_df = load_benchmark()
-        snapshot = load_regime(bench_df)
+        with st.spinner(f"{BENCHMARK} 데이터 조회 중..."):
+            bench_df = load_benchmark()
+            snapshot = load_regime(bench_df)
 
-    regime = snapshot["regime"]
-    exposure = snapshot["exposure"]
+        regime = snapshot["regime"]
+        exposure = snapshot["exposure"]
 
-    c1, c2, c3, c4, c5 = st.columns([1.3, 1, 1, 1, 1])
-    badge = {"BULL": ("✅", "success"), "SIDEWAYS": ("〰️", "warning"), "BEAR": ("🛑", "error")}[regime]
-    getattr(c1, badge[1])(f"{badge[0]} {regime} · 노출 {exposure*100:.0f}%")
-    c2.metric(f"{BENCHMARK} 종가", f"{snapshot['close']:.2f}")
-    c3.metric("MA20", f"{snapshot['ma20']:.2f}")
-    c4.metric("MA200", f"{snapshot['ma200']:.2f}")
-    c5.metric("Slope5d(MA20)", fmt_pct(snapshot["slope5d"]))
+        c1, c2, c3, c4, c5 = st.columns([1.3, 1, 1, 1, 1])
+        badge = {"BULL": ("✅", "success"), "SIDEWAYS": ("〰️", "warning"), "BEAR": ("🛑", "error")}[regime]
+        getattr(c1, badge[1])(f"{badge[0]} {regime} · 노출 {exposure*100:.0f}%")
+        c2.metric(f"{BENCHMARK} 종가", f"{snapshot['close']:.2f}")
+        c3.metric("MA20", f"{snapshot['ma20']:.2f}")
+        c4.metric("MA200", f"{snapshot['ma200']:.2f}")
+        c5.metric("Slope5d(MA20)", fmt_pct(snapshot["slope5d"]))
 
-    if regime == "BEAR":
-        st.error("BEAR 국면입니다. 신규 매수를 전면 차단하고 현금 100%를 유지합니다. "
-                 "아래 2~4단계는 참고용으로만 계속 표시됩니다.")
+        if regime == "BEAR":
+            st.error("BEAR 국면입니다. 신규 매수를 전면 차단하고 현금 100%를 유지합니다. "
+                     "아래 2~4단계는 참고용으로만 계속 표시됩니다.")
 
-    # ================================================================
-    # Module 2: 섹터 로테이션
-    # ================================================================
-    st.header("2️⃣ 섹터 로테이션 (SectorRotationEngine)", divider="gray")
-    st.caption(f"1주({ROC_SHORT}거래일)/1개월({ROC_LONG}거래일) 수익률 순위를 0.3:0.7로 가중해 "
-               f"Score_Rank가 가장 낮은(우수) 상위 {TOP_SECTOR_COUNT}개 섹터를 주도 섹터로 선정합니다.")
-    if sideways_mode == SIDEWAYS_MODE_HYBRID:
-        sideways_label = "혼합형"
-        sideways_desc = (f"방어적 섹터({', '.join(DEFENSIVE_ETFS)}) 중 Score_Rank 1위 + "
-                         f"공격적 섹터({', '.join(OFFENSIVE_ETFS)}) 중 Score_Rank 1위")
-    else:
-        sideways_label = "방어형"
-        sideways_desc = f"방어적 섹터({', '.join(DEFENSIVE_ETFS)}) 4개 중 Score_Rank 상위 {TOP_SECTOR_COUNT}개"
-    with st.expander("📋 조건 상세보기"):
-        st.markdown(f"""
+        # ================================================================
+        # Module 2: 섹터 로테이션
+        # ================================================================
+        st.header("2️⃣ 섹터 로테이션 (SectorRotationEngine)", divider="gray")
+        st.caption(f"1주({ROC_SHORT}거래일)/1개월({ROC_LONG}거래일) 수익률 순위를 0.3:0.7로 가중해 "
+                   f"Score_Rank가 가장 낮은(우수) 상위 {TOP_SECTOR_COUNT}개 섹터를 주도 섹터로 선정합니다.")
+        if sideways_mode == SIDEWAYS_MODE_HYBRID:
+            sideways_label = "혼합형"
+            sideways_desc = (f"방어적 섹터({', '.join(DEFENSIVE_ETFS)}) 중 Score_Rank 1위 + "
+                             f"공격적 섹터({', '.join(OFFENSIVE_ETFS)}) 중 Score_Rank 1위")
+        else:
+            sideways_label = "방어형"
+            sideways_desc = f"방어적 섹터({', '.join(DEFENSIVE_ETFS)}) 4개 중 Score_Rank 상위 {TOP_SECTOR_COUNT}개"
+        with st.expander("📋 조건 상세보기"):
+            st.markdown(f"""
 - **BULL**: GICS 11개 섹터 ETF 전체 중 Score_Rank 상위 {TOP_SECTOR_COUNT}개
 - **SIDEWAYS** ({sideways_label}): {sideways_desc}
 - **BEAR**: 섹터 미선정 (Cash 100%)
 - Score_Rank = 0.3 × Rank(1주 수익률) + 0.7 × Rank(1개월 수익률) — 낮을수록 우수
 """)
 
-    with st.spinner("섹터 ETF 스코어 계산 중..."):
-        scored, sector_price_data = load_sector_scores()
-        leaders = SectorRotationEngine(sideways_mode=sideways_mode).select_leading_sectors(sector_price_data, regime)
+        with st.spinner("섹터 ETF 스코어 계산 중..."):
+            scored, sector_price_data = load_sector_scores()
+            leaders = SectorRotationEngine(sideways_mode=sideways_mode).select_leading_sectors(sector_price_data, regime)
 
-    if leaders:
-        st.write(" ".join(f"🏆 **{t}**" for t in leaders))
-    else:
-        st.info("BEAR 국면이거나 조건을 만족하는 주도 섹터가 없습니다.")
+        if leaders:
+            st.write(" ".join(f"🏆 **{t}**" for t in leaders))
+        else:
+            st.info("BEAR 국면이거나 조건을 만족하는 주도 섹터가 없습니다.")
 
-    def _format_score_table(df):
-        disp = df.copy()
-        disp.index.name = "ETF"
-        disp = disp.rename(columns={
-            "roc_5d": "ROC 1주", "roc_21d": "ROC 1개월",
-            "rank_1w": "순위(1주)", "rank_1m": "순위(1개월)", "score": "Score_Rank",
-        })
-        return disp.style.format({"ROC 1주": "{:+.2%}", "ROC 1개월": "{:+.2%}", "Score_Rank": "{:.2f}"})
+        def _format_score_table(df):
+            disp = df.copy()
+            disp.index.name = "ETF"
+            disp = disp.rename(columns={
+                "roc_5d": "ROC 1주", "roc_21d": "ROC 1개월",
+                "rank_1w": "순위(1주)", "rank_1m": "순위(1개월)", "score": "Score_Rank",
+            })
+            return disp.style.format({"ROC 1주": "{:+.2%}", "ROC 1개월": "{:+.2%}", "Score_Rank": "{:.2f}"})
 
-    if regime == "SIDEWAYS" and sideways_mode == SIDEWAYS_MODE_HYBRID:
-        # 혼합형: 방어 그룹과 공격 그룹 각각에서 1위를 뽑으므로, 선정에 쓰인 그룹별 순위표를 나눠 보여준다.
-        defensive_data = {t: sector_price_data[t] for t in DEFENSIVE_ETFS if t in sector_price_data}
-        offensive_data = {t: sector_price_data[t] for t in OFFENSIVE_ETFS if t in sector_price_data}
-        st.caption("〰️ 현재 SIDEWAYS 국면 · 혼합형: 방어 그룹 1위 + 공격 그룹 1위를 주도 섹터로 선정합니다. "
-                   "아래는 그룹별 실제 선정용 순위표입니다.")
-        st.markdown("**방어 그룹** (" + ", ".join(DEFENSIVE_ETFS) + ")")
-        st.dataframe(_format_score_table(sector_engine.score_sectors(defensive_data)), use_container_width=True)
-        st.markdown("**공격 그룹** (" + ", ".join(OFFENSIVE_ETFS) + ")")
-        st.dataframe(_format_score_table(sector_engine.score_sectors(offensive_data)), use_container_width=True)
-        with st.expander("전체 11개 섹터 기준 순위표 보기 (참고용 — SIDEWAYS 선정에는 미사용)"):
+        if regime == "SIDEWAYS" and sideways_mode == SIDEWAYS_MODE_HYBRID:
+            # 혼합형: 방어 그룹과 공격 그룹 각각에서 1위를 뽑으므로, 선정에 쓰인 그룹별 순위표를 나눠 보여준다.
+            defensive_data = {t: sector_price_data[t] for t in DEFENSIVE_ETFS if t in sector_price_data}
+            offensive_data = {t: sector_price_data[t] for t in OFFENSIVE_ETFS if t in sector_price_data}
+            st.caption("〰️ 현재 SIDEWAYS 국면 · 혼합형: 방어 그룹 1위 + 공격 그룹 1위를 주도 섹터로 선정합니다. "
+                       "아래는 그룹별 실제 선정용 순위표입니다.")
+            st.markdown("**방어 그룹** (" + ", ".join(DEFENSIVE_ETFS) + ")")
+            st.dataframe(_format_score_table(sector_engine.score_sectors(defensive_data)), use_container_width=True)
+            st.markdown("**공격 그룹** (" + ", ".join(OFFENSIVE_ETFS) + ")")
+            st.dataframe(_format_score_table(sector_engine.score_sectors(offensive_data)), use_container_width=True)
+            with st.expander("전체 11개 섹터 기준 순위표 보기 (참고용 — SIDEWAYS 선정에는 미사용)"):
+                st.dataframe(_format_score_table(scored), use_container_width=True)
+        elif regime == "SIDEWAYS":
+            # 방어형: SIDEWAYS는 방어적 섹터 4개 안에서만 다시 순위를 매겨 선정하므로,
+            # 전체 11개 기준 표를 그대로 보여주면 "1등인데 왜 안 뽑혔지?"로 오해하기 쉽다.
+            # 실제 선정에 쓰인 것과 동일한(방어적 섹터로 제한된) 순위표를 보여준다.
+            defensive_data = {t: sector_price_data[t] for t in DEFENSIVE_ETFS if t in sector_price_data}
+            scored_defensive = sector_engine.score_sectors(defensive_data)
+            st.caption(f"⚠️ 현재 SIDEWAYS 국면 · 방어형이라 방어적 섹터({', '.join(DEFENSIVE_ETFS)}) 4개 안에서만 "
+                       "다시 순위를 매겨 선정합니다. 아래는 그 4개 기준 실제 선정용 순위표입니다.")
+            st.dataframe(_format_score_table(scored_defensive), use_container_width=True)
+            with st.expander("전체 11개 섹터 기준 순위표 보기 (참고용 — SIDEWAYS 선정에는 미사용)"):
+                st.dataframe(_format_score_table(scored), use_container_width=True)
+        else:
             st.dataframe(_format_score_table(scored), use_container_width=True)
-    elif regime == "SIDEWAYS":
-        # 방어형: SIDEWAYS는 방어적 섹터 4개 안에서만 다시 순위를 매겨 선정하므로,
-        # 전체 11개 기준 표를 그대로 보여주면 "1등인데 왜 안 뽑혔지?"로 오해하기 쉽다.
-        # 실제 선정에 쓰인 것과 동일한(방어적 섹터로 제한된) 순위표를 보여준다.
-        defensive_data = {t: sector_price_data[t] for t in DEFENSIVE_ETFS if t in sector_price_data}
-        scored_defensive = sector_engine.score_sectors(defensive_data)
-        st.caption(f"⚠️ 현재 SIDEWAYS 국면 · 방어형이라 방어적 섹터({', '.join(DEFENSIVE_ETFS)}) 4개 안에서만 "
-                   "다시 순위를 매겨 선정합니다. 아래는 그 4개 기준 실제 선정용 순위표입니다.")
-        st.dataframe(_format_score_table(scored_defensive), use_container_width=True)
-        with st.expander("전체 11개 섹터 기준 순위표 보기 (참고용 — SIDEWAYS 선정에는 미사용)"):
-            st.dataframe(_format_score_table(scored), use_container_width=True)
-    else:
-        st.dataframe(_format_score_table(scored), use_container_width=True)
 
-    # ================================================================
-    # Module 3: 모멘텀 랭킹 (Cross-Sectional CompositeScore)
-    # ================================================================
-    st.header("3️⃣ 모멘텀 랭킹 (MomentumRanker)", divider="gray")
-    st.caption(f"12-1M 모멘텀 + 63일/21일 수익률 + 52주 신고가 근접도 + 맨스필드 RS(MRS)를 가중 합산한 "
-               f"CompositeScore로 주도 섹터 내 상위 {TOP_STOCK_COUNT}종목을 매주 선정합니다 (AND 하드필터 대신 랭킹).")
-    with st.expander("📋 조건 상세보기"):
-        st.markdown(f"""
+        # ================================================================
+        # Module 3: 모멘텀 랭킹 (Cross-Sectional CompositeScore)
+        # ================================================================
+        st.header("3️⃣ 모멘텀 랭킹 (MomentumRanker)", divider="gray")
+        st.caption(f"12-1M 모멘텀 + 63일/21일 수익률 + 52주 신고가 근접도 + 맨스필드 RS(MRS)를 가중 합산한 "
+                   f"CompositeScore로 주도 섹터 내 상위 {TOP_STOCK_COUNT}종목을 매주 선정합니다 (AND 하드필터 대신 랭킹).")
+        with st.expander("📋 조건 상세보기"):
+            st.markdown(f"""
 - **MomentumScore** = 0.5×Rank(Mom_12_1) + 0.3×Rank(ROC_63) + 0.2×Rank(ROC_21)
   - Mom_12_1 = (Close[t-21] − Close[t-252]) / Close[t-252]
 - **CompositeScore** = 0.4×Rank(MomentumScore) + 0.3×Rank(52주신고가근접도) + 0.3×Rank(MRS) — 낮을수록 우수
 - 상위 {TOP_STOCK_COUNT}종목은 눌림목/돌파 타이밍을 기다리지 않고 즉시 매수 후보로 선정됩니다
 """)
 
-    with st.spinner("주도 섹터 대표 종목 모멘텀 랭킹 계산 중... (수십 개 티커 조회로 다소 시간이 걸릴 수 있습니다)"):
-        ranked, candidates_data, ticker_sector_map = load_ranked_candidates(leaders, bench_df) if leaders else (None, {}, {})
+        with st.spinner("주도 섹터 대표 종목 모멘텀 랭킹 계산 중... (수십 개 티커 조회로 다소 시간이 걸릴 수 있습니다)"):
+            ranked, candidates_data, ticker_sector_map = load_ranked_candidates(leaders, bench_df) if leaders else (None, {}, {})
 
-    if ranked is None or ranked.empty:
-        st.info("랭킹 가능한 종목이 없습니다.")
-        top_stocks = None
-    else:
-        top_stocks = ranked.head(TOP_STOCK_COUNT)
-        cols = st.columns(3)
-        for i, (ticker, row) in enumerate(top_stocks.iterrows()):
-            with cols[i % 3]:
-                with st.container(border=True):
-                    st.markdown(f"**[{ticker}]({_stockanalysis_url(ticker)})** · "
-                                f"`{ticker_sector_map.get(ticker, '-')}` · CompositeScore {row['composite_score']:.1f}")
-                    st.metric("현재가", f"${row['close']:.2f}")
-                    st.caption(f"12-1M모멘텀 {row['mom_121']:+.1%} · 63일 {row['roc_63']:+.1%} · 21일 {row['roc_21']:+.1%}")
-                    st.caption(f"52주고점근접도 {row['near_high_ratio']:.2f} · MRS {row['mrs']:+.2f}")
+        if ranked is None or ranked.empty:
+            st.info("랭킹 가능한 종목이 없습니다.")
+            top_stocks = None
+        else:
+            top_stocks = ranked.head(TOP_STOCK_COUNT)
+            cols = st.columns(3)
+            for i, (ticker, row) in enumerate(top_stocks.iterrows()):
+                with cols[i % 3]:
+                    with st.container(border=True):
+                        st.markdown(f"**[{ticker}]({_stockanalysis_url(ticker)})** · "
+                                    f"`{ticker_sector_map.get(ticker, '-')}` · CompositeScore {row['composite_score']:.1f}")
+                        st.metric("현재가", f"${row['close']:.2f}")
+                        st.caption(f"12-1M모멘텀 {row['mom_121']:+.1%} · 63일 {row['roc_63']:+.1%} · 21일 {row['roc_21']:+.1%}")
+                        st.caption(f"52주고점근접도 {row['near_high_ratio']:.2f} · MRS {row['mrs']:+.2f}")
 
-        disp_rank = ranked.rename(columns={
-            "mom_121": "12-1M모멘텀", "roc_63": "63일수익률", "roc_21": "21일수익률",
-            "near_high_ratio": "52주고점근접도", "mrs": "MRS", "composite_score": "CompositeScore",
-        })
-        with st.expander(f"전체 후보 {len(ranked)}종목 랭킹표 보기"):
-            st.dataframe(
-                disp_rank[["12-1M모멘텀", "63일수익률", "21일수익률", "52주고점근접도", "MRS", "CompositeScore"]]
-                .style.format({"12-1M모멘텀": "{:+.1%}", "63일수익률": "{:+.1%}", "21일수익률": "{:+.1%}",
-                               "52주고점근접도": "{:.2f}", "MRS": "{:+.2f}", "CompositeScore": "{:.1f}"}),
-                use_container_width=True,
-            )
+            disp_rank = ranked.rename(columns={
+                "mom_121": "12-1M모멘텀", "roc_63": "63일수익률", "roc_21": "21일수익률",
+                "near_high_ratio": "52주고점근접도", "mrs": "MRS", "composite_score": "CompositeScore",
+            })
+            with st.expander(f"전체 후보 {len(ranked)}종목 랭킹표 보기"):
+                st.dataframe(
+                    disp_rank[["12-1M모멘텀", "63일수익률", "21일수익률", "52주고점근접도", "MRS", "CompositeScore"]]
+                    .style.format({"12-1M모멘텀": "{:+.1%}", "63일수익률": "{:+.1%}", "21일수익률": "{:+.1%}",
+                                   "52주고점근접도": "{:.2f}", "MRS": "{:+.2f}", "CompositeScore": "{:.1f}"}),
+                    use_container_width=True,
+                )
 
-    # ================================================================
-    # Module 4: 매수 후보 & 리스크 관리 (Runner 전략)
-    # ================================================================
-    st.header("4️⃣ 매수 후보 & 리스크 관리 (Runner 전략)", divider="gray")
-    with st.expander("📋 조건 상세보기"):
-        st.markdown(f"""
+        # ================================================================
+        # Module 4: 매수 후보 & 리스크 관리 (Runner 전략)
+        # ================================================================
+        st.header("4️⃣ 매수 후보 & 리스크 관리 (Runner 전략)", divider="gray")
+        with st.expander("📋 조건 상세보기"):
+            st.markdown(f"""
 - 3단계 랭킹 상위 {TOP_STOCK_COUNT}종목은 타이밍 대기 없이 즉시 매수 후보입니다
 - **손절가** = 진입가 − {STOP_ATR_MULT_V2}×ATR14
 - **+{TP1_PCT*100:.0f}%** 도달 시 물량의 {TP1_FRACTION*100:.0f}% 분할익절 + 본전 손절가 상향
@@ -700,54 +749,54 @@ try:
   이번 상위 {TOP_STOCK_COUNT}종목 내에서 정규화(합 100%) × 국면 노출 승수
 """)
 
-    stock_value = 0.0
-    if top_stocks is not None:
-        regime_mult = risk_manager.regime_multiplier(regime)
-        inv_scores = {t: 1.0 / s for t, s in top_stocks["composite_score"].items() if s and s > 0}
-        total_inv = sum(inv_scores.values())
-        signal_count = 0
-        for ticker, row in top_stocks.iterrows():
-            df = candidates_data[ticker]
-            ind = execution.compute_indicators(df)
-            atr = ind.iloc[-1]["ATR14"]
-            if atr != atr or atr <= 0:
-                continue
-            entry_price = float(df["Close"].iloc[-1])
-            stop = execution.initial_stop_v2(entry_price, float(atr))
+        stock_value = 0.0
+        if top_stocks is not None:
+            regime_mult = risk_manager.regime_multiplier(regime)
+            inv_scores = {t: 1.0 / s for t, s in top_stocks["composite_score"].items() if s and s > 0}
+            total_inv = sum(inv_scores.values())
+            signal_count = 0
+            for ticker, row in top_stocks.iterrows():
+                df = candidates_data[ticker]
+                ind = execution.compute_indicators(df)
+                atr = ind.iloc[-1]["ATR14"]
+                if atr != atr or atr <= 0:
+                    continue
+                entry_price = float(df["Close"].iloc[-1])
+                stop = execution.initial_stop_v2(entry_price, float(atr))
 
-            weight = (inv_scores.get(ticker, 0.0) / total_inv) if total_inv > 0 else 0.0
-            position_value = capital * regime_mult * weight
-            shares = int(position_value // entry_price)
-            if shares <= 0:
-                continue
-            actual_value = shares * entry_price
-            signal_count += 1
-            stock_value += actual_value
+                weight = (inv_scores.get(ticker, 0.0) / total_inv) if total_inv > 0 else 0.0
+                position_value = capital * regime_mult * weight
+                shares = int(position_value // entry_price)
+                if shares <= 0:
+                    continue
+                actual_value = shares * entry_price
+                signal_count += 1
+                stock_value += actual_value
 
-            with st.container(border=True):
-                st.markdown(f"### ✅ [{ticker}]({_stockanalysis_url(ticker)}) · "
-                            f"`{ticker_sector_map.get(ticker, '-')}` · CompositeScore {row['composite_score']:.1f}")
-                r1, r2, r3, r4, r5, r6 = st.columns(6)
-                r1.metric("진입가", f"{entry_price:.2f}")
-                r2.metric("손절가", f"{stop:.2f}")
-                r3.metric("비중", f"{weight*100:.1f}%")
-                r4.metric("수량", f"{shares:,}주")
-                r5.metric("투입금액", f"${actual_value:,.0f}")
-                r6.metric("MRS", f"{row['mrs']:+.2f}")
+                with st.container(border=True):
+                    st.markdown(f"### ✅ [{ticker}]({_stockanalysis_url(ticker)}) · "
+                                f"`{ticker_sector_map.get(ticker, '-')}` · CompositeScore {row['composite_score']:.1f}")
+                    r1, r2, r3, r4, r5, r6 = st.columns(6)
+                    r1.metric("진입가", f"{entry_price:.2f}")
+                    r2.metric("손절가", f"{stop:.2f}")
+                    r3.metric("비중", f"{weight*100:.1f}%")
+                    r4.metric("수량", f"{shares:,}주")
+                    r5.metric("투입금액", f"${actual_value:,.0f}")
+                    r6.metric("MRS", f"{row['mrs']:+.2f}")
 
-        if signal_count == 0:
-            st.info("오늘은 매수 가능한 후보가 없습니다.")
+            if signal_count == 0:
+                st.info("오늘은 매수 가능한 후보가 없습니다.")
 
-    if IDLE_CASH_FALLBACK_ENABLED and regime == "BULL":
-        idle_estimate = capital - stock_value
-        if idle_estimate > capital * 0.05:
-            st.info(f"💧 **유휴자금 폭포수 배분**: 상위 종목 매수 후 약 ${idle_estimate:,.0f}의 현금이 남습니다. "
-                    f"BULL 국면 동안 현금 비중 0%를 유지하려면 이 금액을 {FALLBACK_INDEX_TICKER}에 배분하고, "
-                    f"국면이 BEAR로 바뀌면 전량 청산하세요.")
+        if IDLE_CASH_FALLBACK_ENABLED and regime == "BULL":
+            idle_estimate = capital - stock_value
+            if idle_estimate > capital * 0.05:
+                st.info(f"💧 **유휴자금 폭포수 배분**: 상위 종목 매수 후 약 ${idle_estimate:,.0f}의 현금이 남습니다. "
+                        f"BULL 국면 동안 현금 비중 0%를 유지하려면 이 금액을 {FALLBACK_INDEX_TICKER}에 배분하고, "
+                        f"국면이 BEAR로 바뀌면 전량 청산하세요.")
 
-except Exception as e:
-    st.error(f"데이터 조회 중 오류가 발생했습니다: {e}\n\n"
-             "yfinance가 일시적으로 요청을 제한했을 수 있습니다. 잠시 후 새로고침 해보세요.")
+    except Exception as e:
+        st.error(f"데이터 조회 중 오류가 발생했습니다: {e}\n\n"
+                 "yfinance가 일시적으로 요청을 제한했을 수 있습니다. 잠시 후 새로고침 해보세요.")
 
 # ================================================================
 # 백테스트 (버튼 클릭 시 실행 - 무거운 작업이라 기본 비활성)
