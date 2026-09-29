@@ -1,5 +1,5 @@
 {
-  "date": "2026-09-24",
+  "date": "2026-09-25",
   "regime": "SIDEWAYS",
   "sideways_mode": "HYBRID",
   "leaders": [
@@ -10,42 +10,42 @@
     {
       "ticker": "AMD",
       "sector": "XLK",
-      "entry_price": 629.26,
-      "stop": 562.09,
-      "weight_pct": 47.7,
-      "shares": 30
+      "entry_price": 630.63,
+      "stop": 565.1,
+      "weight_pct": 34.3,
+      "shares": 21
     },
     {
       "ticker": "TMO",
       "sector": "XLV",
-      "entry_price": 678.39,
-      "stop": 639.95,
-      "weight_pct": 20.7,
-      "shares": 12
+      "entry_price": 675.0,
+      "stop": 636.39,
+      "weight_pct": 27.4,
+      "shares": 16
     },
     {
       "ticker": "AAPL",
       "sector": "XLK",
-      "entry_price": 335.92,
-      "stop": 318.18,
-      "weight_pct": 11.9,
-      "shares": 14
+      "entry_price": 341.07,
+      "stop": 324.04,
+      "weight_pct": 16.1,
+      "shares": 18
     },
     {
       "ticker": "MRK",
       "sector": "XLV",
-      "entry_price": 147.98,
-      "stop": 139.95,
-      "weight_pct": 11.3,
-      "shares": 30
+      "entry_price": 148.78,
+      "stop": 140.71,
+      "weight_pct": 14.1,
+      "shares": 37
     },
     {
-      "ticker": "JNJ",
+      "ticker": "PFE",
       "sector": "XLV",
-      "entry_price": 270.68,
-      "stop": 257.87,
-      "weight_pct": 8.4,
-      "shares": 12
+      "entry_price": 28.67,
+      "stop": 27.53,
+      "weight_pct": 8.1,
+      "shares": 112
     }
   ]
 }
