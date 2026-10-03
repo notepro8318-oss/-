@@ -488,6 +488,36 @@ def confirm_signal(signal_id: str) -> None:
             save_trades(trades_df, f"Confirm fill: {sig['ticker']} {sig['type']} (position closed)")
 
 
+def summarize_closed_trade(trade, exits_df: pd.DataFrame, signals_df: pd.DataFrame) -> dict:
+    """종료된 포지션의 매도일/평균 매도가/보유일수/손익률을 요약한다.
+
+    매도 내역은 사용자가 직접 기록한 매도 기록(trade_exits)을 우선 사용하고, 없으면
+    체결 확인된 시그널(TP1/TP2/손절/Runner 청산)의 가격·수량으로 대신한다.
+    매도가는 수량 가중평균, 매도일은 마지막 매도일이다. 내역이 없으면 값은 None.
+    """
+    fills: list[tuple] = []
+    if exits_df is not None and not exits_df.empty:
+        sub = exits_df[exits_df["trade_id"] == trade["id"]]
+        fills = [(r["date"], float(r["price"]), int(r["shares"])) for _, r in sub.iterrows()]
+    if not fills and signals_df is not None and not signals_df.empty:
+        sub = signals_df[(signals_df["trade_id"] == trade["id"]) & (signals_df["confirmed"])]
+        fills = [(r["date"], float(r["price"]), int(r["suggested_shares"])) for _, r in sub.iterrows()]
+
+    total_shares = sum(sh for _, _, sh in fills)
+    if not fills or total_shares <= 0:
+        return {"exit_date": None, "exit_price": None, "hold_days": None, "return_pct": None}
+
+    avg_price = sum(p * sh for _, p, sh in fills) / total_shares
+    exit_date = max(d for d, _, _ in fills)
+    entry_price = float(trade["entry_price"])
+    return {
+        "exit_date": exit_date,
+        "exit_price": avg_price,
+        "hold_days": (exit_date - trade["entry_date"]).days,
+        "return_pct": (avg_price / entry_price - 1) * 100 if entry_price else None,
+    }
+
+
 def get_unnotified_signals() -> pd.DataFrame:
     """아직 알림(Telegram 등)을 보내지 않은 시그널을 반환한다.
 

@@ -65,7 +65,7 @@ from journal import (
     archive_trade, restore_trade,
     load_exits, add_exit, delete_exit, record_sale, undo_sale,
     scan_open_trades, confirm_signal, get_dashboard_metrics,
-    PHASE_LABELS, SIGNAL_LABELS, EXIT_SIGNAL_TYPES,
+    PHASE_LABELS, SIGNAL_LABELS, EXIT_SIGNAL_TYPES, summarize_closed_trade,
 )
 import github_store
 
@@ -621,15 +621,35 @@ if tab_journal.open:
         with tab_closed:
             if closed_trades.empty:
                 st.info("종료된 포지션이 없습니다.")
+            if not closed_trades.empty:
+                closed_widths = [1.1, 1.3, 1, 1.3, 1, 1, 1.2, 1.2]
+                for col, label in zip(st.columns(closed_widths),
+                                      ["종목", "매수일", "매수가", "매도일", "매도가", "보유일수", "평가손익률", ""]):
+                    col.markdown(f"**{label}**")
             for _, trow in closed_trades.iterrows():
-                ccol1, ccol2 = st.columns([5, 1])
-                ccol1.write(f"{trow['ticker']} · {trow['entry_date']} 진입 {trow['entry_price']:.2f} · "
-                            f"{PHASE_LABELS.get(trow['phase'], trow['phase'])}" +
-                            (f" · {trow['memo']}" if _has_text(trow.get("memo")) else ""))
-                if ccol2.button("📁 기록/삭제", key=f"main_del_closed_{trow['id']}", use_container_width=True):
+                summary = summarize_closed_trade(trow, exits_df, signals_df)
+                c = st.columns(closed_widths)
+                c[0].markdown(f"[{trow['ticker']}]({_stockanalysis_url(trow['ticker'])})")
+                c[1].write(str(trow["entry_date"]))
+                c[2].write(f"{trow['entry_price']:.2f}")
+                if summary["exit_price"] is None:
+                    c[3].write("-")
+                    c[4].write("-")
+                    c[5].write("-")
+                    c[6].write("-")
+                else:
+                    ret = summary["return_pct"]
+                    c[3].write(str(summary["exit_date"]))
+                    c[4].write(f"{summary['exit_price']:.2f}")
+                    c[5].write(f"{summary['hold_days']}일")
+                    c[6].markdown(f":{'green' if ret >= 0 else 'red'}[{ret:+.2f}%]")
+                if c[7].button("📁 기록/삭제", key=f"main_del_closed_{trow['id']}", use_container_width=True):
                     archive_trade(trow["id"])
                     st.cache_data.clear()
                     st.rerun()
+            if not closed_trades.empty:
+                st.caption("매도일·매도가는 직접 기록한 매도 내역(없으면 체결 확인된 시그널)의 마지막 매도일과 수량 가중 평균가입니다. "
+                           "평가손익률 = 평균 매도가 / 매수가 − 1. 매도 내역이 없으면 '-'로 표시됩니다.")
 
         with tab_history:
             st.caption("'기록/삭제'로 옮긴 포지션입니다. 시그널 추적 대상에서 제외됩니다. "
