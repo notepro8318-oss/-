@@ -18,8 +18,10 @@ Streamlit Cloud(라이브 대시보드)와 GitHub Actions(장중/마감 후 폴�
 
 TP1/TP2 시그널은 phase/current_stop을 즉시 갱신하지만, remaining_shares는
 사용자가 "체결 확인"을 눌러야 실제로 차감된다(실제 체결 수량이 다를 수 있으므로).
-손절류 시그널(STOP/BREAKEVEN_STOP/RUNNER_EXIT)은 전량 청산이 전제이므로 감지 즉시
-status=CLOSED, remaining_shares=0으로 자동 반영된다.
+손절류 시그널(STOP/BREAKEVEN_STOP/RUNNER_EXIT)도 마찬가지로 감지만으로는 포지션을
+종료하지 않는다. 실제 매도는 사용자가 하는 것이므로, "체결 확인"을 누르거나 전량
+매도를 기록해야 status=CLOSED, remaining_shares=0이 된다. 확인 전까지는 OPEN 상태로
+남아 청산 알림이 대기하며, 이 동안 해당 포지션은 추가 스캔하지 않는다(중복 시그널 방지).
 """
 
 from __future__ import annotations
@@ -61,6 +63,8 @@ PHASE_LABELS = {
     "STAGE_1": "STAGE_1 · TP1 완료 (TP2 대기, 손절가 본전)",
     "STAGE_2": "STAGE_2 · TP2 완료 · Runner 추세추종",
 }
+# 감지되면 포지션 전량 청산을 의미하는 시그널 (사용자가 체결 확인/전량 매도 기록을 해야 종료됨)
+EXIT_SIGNAL_TYPES = ("STOP", "BREAKEVEN_STOP", "RUNNER_EXIT")
 SIGNAL_LABELS = {
     "TP1": f"TP1 익절 (+{TP1_PCT*100:.0f}%)",
     "TP2": f"TP2 익절 (+{TP2_PCT*100:.0f}%)",
@@ -192,10 +196,13 @@ def record_sale(trade_id: str, exit_date, price: float, shares: int, memo: str =
 
     signals_df = load_signals()
     if not signals_df.empty:
-        pend = signals_df[(signals_df["trade_id"] == trade_id) & (~signals_df["confirmed"])
-                          & (signals_df["type"].isin(["TP1", "TP2"]))]
-        if not pend.empty:
-            signals_df.at[pend.sort_values("date").index[0], "confirmed"] = True
+        unconfirmed = signals_df[(signals_df["trade_id"] == trade_id) & (~signals_df["confirmed"])]
+        pend_tp = unconfirmed[unconfirmed["type"].isin(["TP1", "TP2"])]
+        to_confirm = list(pend_tp.sort_values("date").index[:1])
+        if left == 0:
+            to_confirm += list(unconfirmed[unconfirmed["type"].isin(EXIT_SIGNAL_TYPES)].index)
+        if to_confirm:
+            signals_df.loc[to_confirm, "confirmed"] = True
             save_signals(signals_df, f"Confirm signal via recorded sale ({trade_id})")
 
     return {"ok": True, "closed": left == 0, "remaining": left}
@@ -363,8 +370,6 @@ def _simulate_day(trade: dict, day_date, row: pd.Series) -> tuple[dict, list[dic
             if low <= trade["current_stop"]:
                 signals.append(_make_signal(trade["id"], trade["ticker"], day_date, "STOP",
                                              trade["current_stop"], trade["remaining_shares"]))
-                trade["status"] = "CLOSED"
-                trade["remaining_shares"] = 0
                 break
             if high >= entry_price * (1 + TP1_PCT):
                 suggested = round(initial_shares * TP1_FRACTION)
@@ -379,8 +384,6 @@ def _simulate_day(trade: dict, day_date, row: pd.Series) -> tuple[dict, list[dic
             if low <= trade["current_stop"]:
                 signals.append(_make_signal(trade["id"], trade["ticker"], day_date, "BREAKEVEN_STOP",
                                              trade["current_stop"], trade["remaining_shares"]))
-                trade["status"] = "CLOSED"
-                trade["remaining_shares"] = 0
                 break
             if high >= entry_price * (1 + TP2_PCT):
                 suggested = round(initial_shares * TP2_FRACTION)
@@ -395,8 +398,6 @@ def _simulate_day(trade: dict, day_date, row: pd.Series) -> tuple[dict, list[dic
             if ma50 is not None and not pd.isna(ma50) and close < float(ma50):
                 signals.append(_make_signal(trade["id"], trade["ticker"], day_date, "RUNNER_EXIT",
                                              close, trade["remaining_shares"]))
-                trade["status"] = "CLOSED"
-                trade["remaining_shares"] = 0
             break
 
         break
@@ -414,9 +415,16 @@ def scan_open_trades() -> list[dict]:
     all_new_signals: list[dict] = []
     any_trade_changed = False
 
+    pending_exit_trade_ids = set()
+    if not signals_df.empty:
+        pending_exit = signals_df[(~signals_df["confirmed"]) & (signals_df["type"].isin(EXIT_SIGNAL_TYPES))]
+        pending_exit_trade_ids = set(pending_exit["trade_id"])
+
     for i, row in trades_df.iterrows():
         if row["status"] != "OPEN" or row.get("archived", False):
             continue
+        if row["id"] in pending_exit_trade_ids:
+            continue  # 청산 알림이 확인 대기 중 — 같은 청산 시그널을 매 스캔마다 중복 생성하지 않는다
         df = fetch_ohlcv(row["ticker"], period="5y")
         if df.empty:
             continue
@@ -432,7 +440,7 @@ def scan_open_trades() -> list[dict]:
             trade, sigs = _simulate_day(trade, day_date, day_row)
             day_signals.extend(sigs)
             trade["last_checked_date"] = day_date.date()
-            if trade["status"] == "CLOSED":
+            if any(sig["type"] in EXIT_SIGNAL_TYPES for sig in sigs):
                 break
 
         for col in TRADE_COLUMNS:
@@ -453,7 +461,7 @@ def scan_open_trades() -> list[dict]:
 
 
 def confirm_signal(signal_id: str) -> None:
-    """시그널을 확인 처리한다. TP류는 잔여 수량을 실제로 차감한다."""
+    """시그널을 확인 처리한다. TP류는 잔여 수량을 차감하고, 청산류(손절/Runner 청산)는 포지션을 종료한다."""
     signals_df = load_signals()
     match = signals_df[signals_df["id"] == signal_id]
     if match.empty:
@@ -470,6 +478,14 @@ def confirm_signal(signal_id: str) -> None:
             remaining = max(0, int(trades_df.at[idx, "remaining_shares"]) - int(sig["suggested_shares"]))
             trades_df.at[idx, "remaining_shares"] = remaining
             save_trades(trades_df, f"Confirm fill: {sig['ticker']} {sig['type']}")
+    elif sig["type"] in EXIT_SIGNAL_TYPES:
+        trades_df = load_trades()
+        tmatch = trades_df.index[trades_df["id"] == sig["trade_id"]]
+        if len(tmatch):
+            idx = tmatch[0]
+            trades_df.at[idx, "remaining_shares"] = 0
+            trades_df.at[idx, "status"] = "CLOSED"
+            save_trades(trades_df, f"Confirm fill: {sig['ticker']} {sig['type']} (position closed)")
 
 
 def get_unnotified_signals() -> pd.DataFrame:

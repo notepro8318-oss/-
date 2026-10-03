@@ -65,7 +65,7 @@ from journal import (
     archive_trade, restore_trade,
     load_exits, add_exit, delete_exit, record_sale, undo_sale,
     scan_open_trades, confirm_signal, get_dashboard_metrics,
-    PHASE_LABELS, SIGNAL_LABELS,
+    PHASE_LABELS, SIGNAL_LABELS, EXIT_SIGNAL_TYPES,
 )
 import github_store
 
@@ -612,7 +612,8 @@ if tab_journal.open:
                             scol1, scol2 = st.columns([4, 1])
                             scol1.warning(f"🔔 **{SIGNAL_LABELS.get(sig['type'], sig['type'])}** — "
                                           f"{sig['date']} 종가 {sig['price']:.2f}, 매도 제안 수량 {int(sig['suggested_shares']):,}주")
-                            if scol2.button("✅ 체결 확인", key=f"main_confirm_{sig['id']}", use_container_width=True):
+                            confirm_label = "✅ 매도 완료 확인" if sig["type"] in EXIT_SIGNAL_TYPES else "✅ 체결 확인"
+                            if scol2.button(confirm_label, key=f"main_confirm_{sig['id']}", use_container_width=True):
                                 confirm_signal(sig["id"])
                                 st.cache_data.clear()
                                 st.rerun()
