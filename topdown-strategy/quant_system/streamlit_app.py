@@ -63,7 +63,7 @@ from risk import RiskManager
 from journal import (
     load_trades, load_signals, preview_entry, add_trade, delete_trade,
     archive_trade, restore_trade,
-    load_exits, add_exit, delete_exit,
+    load_exits, add_exit, delete_exit, record_sale, undo_sale,
     scan_open_trades, confirm_signal, get_dashboard_metrics,
     PHASE_LABELS, SIGNAL_LABELS,
 )
@@ -222,6 +222,30 @@ def _parse_comma(s: str) -> float:
     """콤마/공백 등을 제거하고 숫자만 남겨 float으로 변환한다. 빈 값이면 0."""
     digits = "".join(ch for ch in str(s) if ch.isdigit() or ch == ".")
     return float(digits) if digits else 0.0
+
+
+def _on_record_sale(trade_id: str) -> None:
+    """진행중 카드의 '매도' 버튼 콜백. 입력값을 검증·기록하고 입력칸을 비운다.
+
+    위젯 값은 위젯이 그려진 뒤에는 바꿀 수 없으므로, 입력칸 초기화는 반드시
+    버튼 콜백(스크립트 재실행 전)에서 한다.
+    """
+    price_key, shares_key = f"sale_price_{trade_id}", f"sale_shares_{trade_id}"
+    price, shares = st.session_state.get(price_key), st.session_state.get(shares_key)
+    if not price or not shares:
+        st.session_state[f"sale_msg_{trade_id}"] = ("warning", "매도가와 매도수량을 입력해 주세요.")
+        return
+    result = record_sale(trade_id, datetime.now().date(), float(price), int(shares))
+    if "error" in result:
+        st.session_state[f"sale_msg_{trade_id}"] = ("warning", result["error"])
+        return
+    st.cache_data.clear()
+    st.session_state[price_key] = None
+    st.session_state[shares_key] = None
+    if result["closed"]:
+        st.session_state[f"sale_msg_{trade_id}"] = ("success", "전량 매도되어 '종료' 탭으로 이동했습니다.")
+    else:
+        st.session_state[f"sale_msg_{trade_id}"] = ("success", f"매도 기록 완료 — 잔여 {result['remaining']:,}주")
 
 
 def _render_history_card(hrow, exits_df, key_prefix: str, compact: bool = False) -> None:
@@ -540,11 +564,12 @@ if tab_journal.open:
                         st.cache_data.clear()
                         st.rerun()
 
-                    st.caption(PHASE_LABELS.get(trow["phase"], trow["phase"]))
-
                     metrics = load_dashboard_metrics(ticker, float(trow["entry_price"]), float(trow["initial_stop"]),
                                                       float(trow["current_stop"]), trow["phase"])
-                    m1, m2, m3, m4, m5, m6 = st.columns(6)
+                    r_text = f" · R배수 {metrics['r_multiple']:+.2f}R" if "error" not in metrics else ""
+                    st.caption(PHASE_LABELS.get(trow["phase"], trow["phase"]) + r_text)
+
+                    m1, m2, m3, m4, m5, c_price, c_shares, c_btn = st.columns([1, 1, 1, 1, 1, 1.1, 1.1, 0.8])
                     m1.metric("매수가", f"{trow['entry_price']:.2f}")
                     m2.metric("현재가", f"{metrics['last_close']:.2f}" if "error" not in metrics else "N/A")
                     m3.metric("손절가", f"{trow['current_stop']:.2f}",
@@ -555,7 +580,29 @@ if tab_journal.open:
                     else:
                         m4.metric("목표가", "Runner(MA50)")
                     m5.metric("잔여 수량", f"{int(trow['remaining_shares']):,} / {int(trow['initial_shares']):,}주")
-                    m6.metric("R배수", f"{metrics['r_multiple']:+.2f}R" if "error" not in metrics else "N/A")
+                    c_price.number_input("매도가", value=None, min_value=0.0, step=0.01, format="%.2f",
+                                         placeholder="매도가", key=f"sale_price_{trade_id}")
+                    c_shares.number_input("매도수량", value=None, min_value=0, step=1,
+                                          placeholder="수량", key=f"sale_shares_{trade_id}")
+                    c_btn.markdown("<div style='height:1.7rem'></div>", unsafe_allow_html=True)
+                    c_btn.button("💰 매도", key=f"sale_btn_{trade_id}", use_container_width=True,
+                                 on_click=_on_record_sale, args=(trade_id,))
+
+                    sale_msg = st.session_state.pop(f"sale_msg_{trade_id}", None)
+                    if sale_msg:
+                        getattr(st, sale_msg[0])(sale_msg[1])
+
+                    trade_sales = exits_df[exits_df["trade_id"] == trade_id] if not exits_df.empty else exits_df
+                    if not trade_sales.empty:
+                        st.caption("매도 기록")
+                        for _, ex in trade_sales.sort_values("date").iterrows():
+                            pct = (ex["price"] / trow["entry_price"] - 1) * 100 if trow["entry_price"] else None
+                            xcol1, xcol2 = st.columns([6, 1])
+                            xcol1.write(f"{ex['date']} · {ex['price']:.2f} · {int(ex['shares']):,}주 · {fmt_pct(pct)}")
+                            if xcol2.button("↩️ 취소", key=f"sale_undo_{ex['id']}", use_container_width=True):
+                                undo_sale(ex["id"])
+                                st.cache_data.clear()
+                                st.rerun()
 
                     if "error" in metrics:
                         st.error(metrics["error"])

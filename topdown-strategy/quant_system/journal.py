@@ -163,6 +163,62 @@ def delete_exit(exit_id: str) -> None:
     save_exits(exits_df, f"Delete exit {exit_id}")
 
 
+def record_sale(trade_id: str, exit_date, price: float, shares: int, memo: str = "") -> dict:
+    """진행중(OPEN) 포지션의 실제 매도를 매도 기록에 남기고 잔여 수량을 차감한다.
+
+    - 잔여 수량보다 많이 팔 수 없다. 전량 매도하면 포지션은 CLOSED(종료)가 된다.
+    - 같은 포지션에 확인 대기 중인 TP1/TP2 시그널이 있으면 가장 오래된 1건을 확인 처리한다
+      (실제 체결 수량을 직접 기록했으므로 "체결 확인"으로 다시 차감하면 이중 차감되기 때문).
+    """
+    shares = int(shares)
+    if price is None or price <= 0 or shares <= 0:
+        return {"error": "매도가와 매도수량을 올바르게 입력해 주세요."}
+
+    trades_df = load_trades()
+    matches = trades_df.index[trades_df["id"] == trade_id]
+    if len(matches) == 0:
+        return {"error": "포지션을 찾을 수 없습니다."}
+    idx = matches[0]
+    remaining = int(trades_df.at[idx, "remaining_shares"])
+    if shares > remaining:
+        return {"error": f"매도수량이 잔여 수량({remaining:,}주)보다 많습니다."}
+
+    add_exit(trade_id, exit_date, price, shares, memo)
+    left = remaining - shares
+    trades_df.at[idx, "remaining_shares"] = left
+    if left == 0:
+        trades_df.at[idx, "status"] = "CLOSED"
+    save_trades(trades_df, f"Record sale: {trades_df.at[idx, 'ticker']} {shares}주 @ {price}")
+
+    signals_df = load_signals()
+    if not signals_df.empty:
+        pend = signals_df[(signals_df["trade_id"] == trade_id) & (~signals_df["confirmed"])
+                          & (signals_df["type"].isin(["TP1", "TP2"]))]
+        if not pend.empty:
+            signals_df.at[pend.sort_values("date").index[0], "confirmed"] = True
+            save_signals(signals_df, f"Confirm signal via recorded sale ({trade_id})")
+
+    return {"ok": True, "closed": left == 0, "remaining": left}
+
+
+def undo_sale(exit_id: str) -> None:
+    """record_sale로 남긴 매도 기록을 지우고 잔여 수량을 되돌린다."""
+    exits_df = load_exits()
+    match = exits_df[exits_df["id"] == exit_id]
+    if match.empty:
+        return
+    ex = match.iloc[0]
+    delete_exit(exit_id)
+    trades_df = load_trades()
+    matches = trades_df.index[trades_df["id"] == ex["trade_id"]]
+    if len(matches):
+        idx = matches[0]
+        restored = min(int(trades_df.at[idx, "initial_shares"]),
+                       int(trades_df.at[idx, "remaining_shares"]) + int(ex["shares"]))
+        trades_df.at[idx, "remaining_shares"] = restored
+        save_trades(trades_df, f"Undo sale {exit_id}")
+
+
 # ------------------------------------------------------------------
 # 진입 미리보기 / 등록
 # ------------------------------------------------------------------
