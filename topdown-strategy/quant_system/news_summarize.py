@@ -61,6 +61,8 @@ class GeminiError(RuntimeError):
         self.switch_model = switch_model
 
 
+REQUEST_TIMEOUT = 75      # 요청 1회당 최대 대기(초)
+TOTAL_BUDGET = 420        # 모델 전환을 포함한 전체 시도 시간 상한(초). 넘으면 제목만 보내는 폴백으로
 RETRY_WAITS = (4, 8, 16, 32)  # 429/5xx 일시 장애 시 재시도 대기(초) — 최대 5회 시도, 약 1분
 
 
@@ -72,8 +74,15 @@ def _call_gemini(prompt: str, api_key: str, model: str, waits: tuple = RETRY_WAI
     }
     last = ""
     for attempt in range(len(waits) + 1):
-        resp = requests.post(GEMINI_URL.format(model=model), json=body, timeout=90,
-                             headers={"x-goog-api-key": api_key, "Content-Type": "application/json"})
+        try:
+            resp = requests.post(GEMINI_URL.format(model=model), json=body, timeout=REQUEST_TIMEOUT,
+                                 headers={"x-goog-api-key": api_key, "Content-Type": "application/json"})
+        except requests.RequestException as e:  # 타임아웃/연결 오류도 일시 장애로 취급
+            last = f"{type(e).__name__}: {str(e)[:200]}"
+            if attempt < len(waits):
+                time.sleep(waits[attempt])
+                continue
+            raise GeminiError(f"Gemini 응답 없음({model}): {last}", switch_model=True)
         if resp.ok:
             data = resp.json()
             try:
@@ -159,10 +168,13 @@ def summarize(news: dict[str, list[Article]], names: dict[str, str], api_key: st
     if not news:
         return {}
     prompt = build_user_prompt(news, names)
+    started = time.monotonic()
     tried: list[str] = []
     candidates = [model]
     while candidates:
         current = candidates.pop(0)
+        if tried and time.monotonic() - started > TOTAL_BUDGET:
+            raise GeminiError(f"Gemini 시도 시간 초과({TOTAL_BUDGET}초) — 시도한 모델: {tried}")
         tried.append(current)
         try:
             return parse_summary(_call_gemini(prompt, api_key, current), news)
