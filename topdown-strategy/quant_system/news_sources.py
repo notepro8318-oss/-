@@ -129,3 +129,43 @@ def rank_articles(articles: list[Article], ticker: str, name: str, limit: int = 
 def collect_news(ticker: str, name: str, now: datetime, hours: float = 24, limit: int = 12) -> list[Article]:
     articles = fetch_google_news(build_query(ticker, name))
     return rank_articles(filter_recent(articles, now, hours), ticker, name, limit)
+
+
+# ---------------------------------------------------------------------------
+# 섹터 뉴스 (보유 종목이 속한 주요 섹터의 업종 전반 동향)
+# ---------------------------------------------------------------------------
+SECTOR_KO = {
+    "XLK": "기술", "XLV": "헬스케어", "XLF": "금융", "XLY": "경기소비재", "XLP": "필수소비재", "XLI": "산업재",
+    "XLE": "에너지", "XLU": "유틸리티", "XLRE": "부동산", "XLB": "소재", "XLC": "커뮤니케이션",
+}
+SECTOR_EN = {
+    "XLK": "Technology", "XLV": "Health Care", "XLF": "Financials", "XLY": "Consumer Discretionary",
+    "XLP": "Consumer Staples", "XLI": "Industrials", "XLE": "Energy", "XLU": "Utilities",
+    "XLRE": "Real Estate", "XLB": "Materials", "XLC": "Communication Services",
+}
+_US_MARKET = '(Nasdaq OR "S&P 500" OR "Wall Street" OR NYSE)'
+SECTOR_QUERY = {
+    "XLK": '("tech stocks" OR "technology sector" OR "chip stocks" OR "semiconductor stocks")',
+    "XLV": '("healthcare stocks" OR "health care sector" OR "biotech stocks" OR "pharma stocks")',
+    "XLF": '("bank stocks" OR "financial stocks" OR "financial sector")',
+    "XLY": '("consumer discretionary" OR "retail stocks" OR "auto stocks")',
+    "XLP": '("consumer staples" OR "staples stocks" OR "grocery stocks")',
+    "XLI": '("industrial stocks" OR "industrials sector" OR "aerospace stocks")',
+    "XLE": '("energy stocks" OR "energy sector" OR "oil stocks")',
+    "XLU": '("utility stocks" OR "utilities sector")',
+    "XLRE": '("real estate stocks" OR "REIT stocks" OR "real estate sector")',
+    "XLB": '("materials stocks" OR "mining stocks" OR "chemical stocks")',
+    "XLC": '("communication services" OR "media stocks" OR "telecom stocks")',
+}
+# yfinance info["sector"] -> 섹터 ETF (전략 유니버스에 없는 종목의 섹터 판별용)
+YF_SECTOR_TO_ETF = {
+    "Technology": "XLK", "Healthcare": "XLV", "Financial Services": "XLF", "Consumer Cyclical": "XLY",
+    "Consumer Defensive": "XLP", "Industrials": "XLI", "Energy": "XLE", "Utilities": "XLU",
+    "Real Estate": "XLRE", "Basic Materials": "XLB", "Communication Services": "XLC",
+}
+
+
+def collect_sector_news(etf: str, now: datetime, hours: float = 24, limit: int = 10) -> list[Article]:
+    """섹터 ETF 코드에 해당하는 업종 전반 기사를 발행 시각 기준 최근 hours시간 이내로 최신순 limit개 수집한다."""
+    query = f"{SECTOR_QUERY[etf]} {_US_MARKET} when:1d"
+    return filter_recent(fetch_google_news(query), now, hours)[:limit]
