@@ -127,8 +127,8 @@ def main() -> None:
     if with_news and api_key:
         try:
             model = os.environ.get("GEMINI_MODEL", "").strip() or DEFAULT_MODEL
-            summaries = summarize(with_news, names, api_key, model)
-            print(f"Gemini({model}) 요약 완료: {len(summaries)}종목")
+            summaries = summarize(with_news, names, api_key, model, debug=dry_run)
+            print(f"Gemini 요약 완료: {len(summaries)}종목")
         except Exception as e:
             print(f"Gemini 요약 실패 - 제목만 발송합니다: {e}")
     elif with_news:

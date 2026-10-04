@@ -159,7 +159,7 @@ def parse_summary(raw: str, news: dict[str, list[Article]]) -> dict[str, dict]:
 
 
 def summarize(news: dict[str, list[Article]], names: dict[str, str], api_key: str,
-              model: str = DEFAULT_MODEL, max_fallbacks: int = 2) -> dict[str, dict]:
+              model: str = DEFAULT_MODEL, max_fallbacks: int = 2, debug: bool = False) -> dict[str, dict]:
     """기사가 1건 이상인 종목들만 한 번의 호출로 요약한다.
 
     모델이 폐기됐거나 과부하가 계속되면 사용 가능한 다른 flash 모델로 최대 max_fallbacks번 전환한다.
@@ -177,7 +177,11 @@ def summarize(news: dict[str, list[Article]], names: dict[str, str], api_key: st
             raise GeminiError(f"Gemini 시도 시간 초과({TOTAL_BUDGET}초) — 시도한 모델: {tried}")
         tried.append(current)
         try:
-            return parse_summary(_call_gemini(prompt, api_key, current), news)
+            raw = _call_gemini(prompt, api_key, current)
+            print(f"[Gemini] 요약에 사용한 모델: {current}")
+            if debug:
+                print("[Gemini] 원문 응답:", raw[:4000])
+            return parse_summary(raw, news)
         except GeminiError as e:
             print(f"[Gemini] {e}")
             if not e.switch_model or len(tried) > max_fallbacks:
