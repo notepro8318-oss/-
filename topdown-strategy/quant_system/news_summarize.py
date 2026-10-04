@@ -83,6 +83,8 @@ def _call_gemini(prompt: str, api_key: str, model: str, waits: tuple = RETRY_WAI
         last = f"{resp.status_code} {resp.text[:300]}"
         if resp.status_code == 404:
             raise GeminiError(f"Gemini 모델 사용 불가({model}): {last}", switch_model=True)
+        if resp.status_code == 429 and "quota" in resp.text.lower():
+            raise GeminiError(f"Gemini 한도 초과({model}): {last}", switch_model=True)
         if resp.status_code in (429, 500, 502, 503, 504):
             if attempt < len(waits):
                 time.sleep(waits[attempt])
@@ -92,21 +94,31 @@ def _call_gemini(prompt: str, api_key: str, model: str, waits: tuple = RETRY_WAI
     raise GeminiError(f"Gemini 호출 실패: {last}")
 
 
-_SKIP_MODEL_WORDS = ("image", "tts", "audio", "live", "embedding", "robotics", "computer", "native", "aqa", "vision")
+_SKIP_MODEL_WORDS = ("image", "tts", "audio", "live", "embedding", "robotics", "computer", "native", "aqa",
+                     "vision", "preview", "exp", "omni", "thinking")
+_STABLE_FLASH = re.compile(r"^gemini-(\d+(?:\.\d+)*)-flash$")
 
 
 def list_flash_models(api_key: str) -> list[str]:
-    """generateContent를 지원하는 텍스트용 flash 계열 모델 이름 목록(최신 추정 순)."""
+    """generateContent를 지원하는 텍스트용 flash 모델을 '정식 버전 최신순 → 별칭(flash-latest) → lite' 순으로 반환한다.
+    실험/프리뷰/omni/이미지·음성 전용 모델은 제외한다(무료 한도가 없거나 용도가 달라 폴백으로 부적합)."""
     resp = requests.get("https://generativelanguage.googleapis.com/v1beta/models", params={"pageSize": 200},
                         headers={"x-goog-api-key": api_key}, timeout=30)
     resp.raise_for_status()
-    names = []
+    names = set()
     for m in resp.json().get("models", []):
         name = m.get("name", "").removeprefix("models/")
         if ("flash" in name and "generateContent" in m.get("supportedGenerationMethods", [])
                 and not any(w in name for w in _SKIP_MODEL_WORDS)):
-            names.append(name)
-    return sorted(set(names), reverse=True)
+            names.add(name)
+
+    def version(n: str) -> tuple:
+        return tuple(int(x) for x in _STABLE_FLASH.match(n).group(1).split("."))
+
+    stable = sorted((n for n in names if _STABLE_FLASH.match(n)), key=version, reverse=True)
+    alias = [n for n in ("gemini-flash-latest",) if n in names]
+    lite = sorted(n for n in names if n not in stable and n not in alias and "lite" in n)
+    return stable + alias + lite
 
 
 def parse_summary(raw: str, news: dict[str, list[Article]]) -> dict[str, dict]:
