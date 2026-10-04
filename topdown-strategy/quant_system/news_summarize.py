@@ -53,14 +53,25 @@ def build_user_prompt(news: dict[str, list[Article]], names: dict[str, str]) -> 
     return "아래는 기사 데이터다(데이터 구간 시작).\n\n" + "\n\n".join(blocks) + "\n\n(데이터 구간 끝) JSON으로만 답해라."
 
 
-def _call_gemini(prompt: str, api_key: str, model: str, retries: int = 3) -> str:
+class GeminiError(RuntimeError):
+    """switch_model=True면 같은 모델로 계속 시도해도 소용없는 상황(모델 폐기/지속적 과부하)."""
+
+    def __init__(self, message: str, switch_model: bool = False):
+        super().__init__(message)
+        self.switch_model = switch_model
+
+
+RETRY_WAITS = (4, 8, 16, 32)  # 429/5xx 일시 장애 시 재시도 대기(초) — 최대 5회 시도, 약 1분
+
+
+def _call_gemini(prompt: str, api_key: str, model: str, waits: tuple = RETRY_WAITS) -> str:
     body = {
         "systemInstruction": {"parts": [{"text": SYSTEM_PROMPT}]},
         "contents": [{"role": "user", "parts": [{"text": prompt}]}],
         "generationConfig": {"temperature": 0.2, "responseMimeType": "application/json"},
     }
     last = ""
-    for attempt in range(retries):
+    for attempt in range(len(waits) + 1):
         resp = requests.post(GEMINI_URL.format(model=model), json=body, timeout=90,
                              headers={"x-goog-api-key": api_key, "Content-Type": "application/json"})
         if resp.ok:
@@ -68,13 +79,34 @@ def _call_gemini(prompt: str, api_key: str, model: str, retries: int = 3) -> str
             try:
                 return data["candidates"][0]["content"]["parts"][0]["text"]
             except (KeyError, IndexError, TypeError):
-                raise RuntimeError(f"Gemini 응답 형식 오류: {str(data)[:300]}")
+                raise GeminiError(f"Gemini 응답 형식 오류: {str(data)[:300]}")
         last = f"{resp.status_code} {resp.text[:300]}"
+        if resp.status_code == 404:
+            raise GeminiError(f"Gemini 모델 사용 불가({model}): {last}", switch_model=True)
         if resp.status_code in (429, 500, 502, 503, 504):
-            time.sleep(3 * (attempt + 1))
-            continue
+            if attempt < len(waits):
+                time.sleep(waits[attempt])
+                continue
+            raise GeminiError(f"Gemini 일시 장애가 계속됨({model}): {last}", switch_model=True)
         break
-    raise RuntimeError(f"Gemini 호출 실패: {last}")
+    raise GeminiError(f"Gemini 호출 실패: {last}")
+
+
+_SKIP_MODEL_WORDS = ("image", "tts", "audio", "live", "embedding", "robotics", "computer", "native", "aqa", "vision")
+
+
+def list_flash_models(api_key: str) -> list[str]:
+    """generateContent를 지원하는 텍스트용 flash 계열 모델 이름 목록(최신 추정 순)."""
+    resp = requests.get("https://generativelanguage.googleapis.com/v1beta/models", params={"pageSize": 200},
+                        headers={"x-goog-api-key": api_key}, timeout=30)
+    resp.raise_for_status()
+    names = []
+    for m in resp.json().get("models", []):
+        name = m.get("name", "").removeprefix("models/")
+        if ("flash" in name and "generateContent" in m.get("supportedGenerationMethods", [])
+                and not any(w in name for w in _SKIP_MODEL_WORDS)):
+            names.append(name)
+    return sorted(set(names), reverse=True)
 
 
 def parse_summary(raw: str, news: dict[str, list[Article]]) -> dict[str, dict]:
@@ -106,9 +138,34 @@ def parse_summary(raw: str, news: dict[str, list[Article]]) -> dict[str, dict]:
 
 
 def summarize(news: dict[str, list[Article]], names: dict[str, str], api_key: str,
-              model: str = DEFAULT_MODEL) -> dict[str, dict]:
-    """기사가 1건 이상인 종목들만 한 번의 호출로 요약한다. 실패하면 예외를 던진다(호출측에서 폴백)."""
+              model: str = DEFAULT_MODEL, max_fallbacks: int = 2) -> dict[str, dict]:
+    """기사가 1건 이상인 종목들만 한 번의 호출로 요약한다.
+
+    모델이 폐기됐거나 과부하가 계속되면 사용 가능한 다른 flash 모델로 최대 max_fallbacks번 전환한다.
+    모두 실패하면 예외를 던진다(호출측에서 제목만 보내는 폴백 처리).
+    """
     if not news:
         return {}
-    raw = _call_gemini(build_user_prompt(news, names), api_key, model)
-    return parse_summary(raw, news)
+    prompt = build_user_prompt(news, names)
+    tried: list[str] = []
+    candidates = [model]
+    while candidates:
+        current = candidates.pop(0)
+        tried.append(current)
+        try:
+            return parse_summary(_call_gemini(prompt, api_key, current), news)
+        except GeminiError as e:
+            print(f"[Gemini] {e}")
+            if not e.switch_model or len(tried) > max_fallbacks:
+                raise
+            if not candidates:
+                try:
+                    available = list_flash_models(api_key)
+                    print(f"[Gemini] 사용 가능한 flash 모델: {available}")
+                except Exception as le:
+                    print(f"[Gemini] 모델 목록 조회 실패: {le}")
+                    raise e
+                candidates = [m for m in available if m not in tried][: max_fallbacks]
+                if not candidates:
+                    raise
+    raise GeminiError("사용 가능한 Gemini 모델이 없습니다", switch_model=True)
