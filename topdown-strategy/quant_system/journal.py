@@ -33,7 +33,7 @@ from datetime import date, datetime, timedelta
 
 import pandas as pd
 
-from qs_config import STOP_ATR_MULT_V2, TP1_PCT, TP1_FRACTION, TP2_PCT, TP2_FRACTION
+from qs_config import STOP_ATR_MULT_V2, TP1_PCT, TP1_FRACTION, TP2_PCT, TP2_FRACTION, SECTOR_STOCKS
 from data import fetch_ohlcv
 from execution import ExecutionEngine
 import github_store
@@ -486,6 +486,15 @@ def confirm_signal(signal_id: str) -> None:
             trades_df.at[idx, "remaining_shares"] = 0
             trades_df.at[idx, "status"] = "CLOSED"
             save_trades(trades_df, f"Confirm fill: {sig['ticker']} {sig['type']} (position closed)")
+
+
+_TICKER_TO_SECTOR = {t: etf for etf, tickers in SECTOR_STOCKS.items() for t in tickers}
+
+
+def sector_of(ticker: str) -> str:
+    """전략 유니버스(SECTOR_STOCKS)에 있는 종목이면 소속 섹터ETF를, 직접 등록한
+    유니버스 밖 종목이면 '기타'를 반환한다."""
+    return _TICKER_TO_SECTOR.get(str(ticker).strip().upper(), "기타")
 
 
 def summarize_closed_trade(trade, exits_df: pd.DataFrame, signals_df: pd.DataFrame) -> dict:

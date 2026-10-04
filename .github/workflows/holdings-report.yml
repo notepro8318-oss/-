@@ -1,0 +1,34 @@
+name: Holdings Report
+
+on:
+  schedule:
+    # 평일 21:45 UTC — 미국 정규장(4:00pm ET) 마감 이후 일봉이 집계된 뒤
+    # (서머타임 EDT 마감 20:00 UTC, 표준시 EST 마감 21:00 UTC 둘 다 이후)
+    - cron: "45 21 * * 1-5"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  holdings-report:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r topdown-strategy/quant_system/requirements.txt
+
+      - name: Send holdings report to Telegram
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          # 수동 실행은 휴장일/장중에도 가장 최근 종가 기준으로 바로 발송해 테스트할 수 있게 한다.
+          FORCE_REPORT: ${{ github.event_name == 'workflow_dispatch' && '1' || '' }}
+        working-directory: topdown-strategy/quant_system
+        run: python holdings_report.py

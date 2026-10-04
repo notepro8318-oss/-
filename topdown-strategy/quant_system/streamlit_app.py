@@ -65,7 +65,7 @@ from journal import (
     archive_trade, restore_trade,
     load_exits, add_exit, delete_exit, record_sale, undo_sale,
     scan_open_trades, confirm_signal, get_dashboard_metrics,
-    PHASE_LABELS, SIGNAL_LABELS, EXIT_SIGNAL_TYPES, summarize_closed_trade,
+    PHASE_LABELS, SIGNAL_LABELS, EXIT_SIGNAL_TYPES, summarize_closed_trade, sector_of,
 )
 import github_store
 
@@ -198,15 +198,6 @@ def _has_text(v) -> bool:
 
 def _stockanalysis_url(ticker: str) -> str:
     return f"https://stockanalysis.com/stocks/{ticker}/"
-
-
-_TICKER_TO_SECTOR = {t: etf for etf, tickers in SECTOR_STOCKS.items() for t in tickers}
-
-
-def _sector_of(ticker: str) -> str:
-    """전략 유니버스(SECTOR_STOCKS)에 있는 종목이면 소속 섹터ETF를, 직접 등록한
-    유니버스 밖 종목이면 '기타'를 반환한다."""
-    return _TICKER_TO_SECTOR.get(ticker.strip().upper(), "기타")
 
 
 def _fmt_comma(v) -> str:
@@ -507,7 +498,7 @@ if tab_journal.open:
             remaining = int(trow["remaining_shares"])
             _summary_rows.append({
                 "ticker": trow["ticker"],
-                "sector": _sector_of(trow["ticker"]),
+                "sector": sector_of(trow["ticker"]),
                 "cost_basis": float(trow["entry_price"]) * remaining,
                 "mkt_value": last_close * remaining,
             })

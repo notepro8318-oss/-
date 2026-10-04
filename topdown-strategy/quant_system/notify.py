@@ -24,15 +24,18 @@ import requests
 from journal import scan_open_trades, get_unnotified_signals, mark_notified, SIGNAL_LABELS
 
 
-def send_telegram_message(text: str) -> bool:
+def send_telegram_message(text: str, parse_mode: str | None = "Markdown") -> bool:
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
     chat_id = os.environ.get("TELEGRAM_CHAT_ID")
     if not token or not chat_id:
         print("TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID 미설정 - 알림 발송을 건너뜁니다.")
         return False
+    payload = {"chat_id": chat_id, "text": text}
+    if parse_mode:
+        payload["parse_mode"] = parse_mode
     resp = requests.post(
         f"https://api.telegram.org/bot{token}/sendMessage",
-        json={"chat_id": chat_id, "text": text, "parse_mode": "Markdown"},
+        json=payload,
         timeout=15,
     )
     if not resp.ok:
