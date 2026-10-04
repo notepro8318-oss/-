@@ -24,7 +24,8 @@ import requests
 from journal import scan_open_trades, get_unnotified_signals, mark_notified, SIGNAL_LABELS
 
 
-def send_telegram_message(text: str, parse_mode: str | None = "Markdown") -> bool:
+def send_telegram_message(text: str, parse_mode: str | None = "Markdown",
+                          disable_web_page_preview: bool = False) -> bool:
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
     chat_id = os.environ.get("TELEGRAM_CHAT_ID")
     if not token or not chat_id:
@@ -33,6 +34,8 @@ def send_telegram_message(text: str, parse_mode: str | None = "Markdown") -> boo
     payload = {"chat_id": chat_id, "text": text}
     if parse_mode:
         payload["parse_mode"] = parse_mode
+    if disable_web_page_preview:
+        payload["disable_web_page_preview"] = True
     resp = requests.post(
         f"https://api.telegram.org/bot{token}/sendMessage",
         json=payload,

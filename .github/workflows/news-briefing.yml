@@ -1,0 +1,43 @@
+name: News Briefing
+
+on:
+  schedule:
+    # 매일 21:00 UTC = 다음날 06:00 KST. (GitHub 스케줄은 혼잡 시 수 분~수십 분 지연될 수 있음)
+    - cron: "0 21 * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "텔레그램으로 보내지 않고 로그에만 출력"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: news-briefing
+  cancel-in-progress: false
+
+jobs:
+  news-briefing:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r topdown-strategy/quant_system/requirements.txt
+
+      - name: Build and send the news briefing
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_MODEL: ${{ vars.GEMINI_MODEL }}
+          DRY_RUN: ${{ github.event.inputs.dry_run == 'true' && '1' || '' }}
+        working-directory: topdown-strategy/quant_system
+        run: python news_briefing.py
