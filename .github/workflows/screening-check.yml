@@ -2,13 +2,21 @@ name: Screening Check
 
 on:
   schedule:
-    # 평일 21:30 UTC — 미국 정규장(4:00pm ET) 마감 직후
-    # (서머타임 EDT 기준 +1.5h, 표준시 EST 기준 +0.5h로 어느 쪽이든 마감 이후)
-    - cron: "30 21 * * 1-5"
+    # 미국 정규장(4:00pm ET) 마감 후 일봉이 확정된 뒤 거래일당 1회.
+    # GitHub 스케줄은 수 시간 늦어지거나 건너뛰어지므로(이 저장소의 21:30 UTC 슬롯은 매번 2.5~3.5시간 늦었음)
+    # 서로 다른 시각의 슬롯 3개를 두고, 먼저 도착한 실행이 처리하면 나머지는 screening_notify.py의
+    # job_guard 검사(마지막 마감 거래일 기준)로 건너뛴다. 표준시(EST)에는 첫 슬롯이 마감 전이라 스스로 보류한다.
+    - cron: "33 20 * * 1-5"
+    - cron: "3 22 * * 1-5"
+    - cron: "33 23 * * 1-5"
   workflow_dispatch: {}
 
 permissions:
   contents: write
+
+concurrency:
+  group: screening-check
+  cancel-in-progress: false
 
 jobs:
   screening-check:

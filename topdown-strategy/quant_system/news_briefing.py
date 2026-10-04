@@ -34,8 +34,10 @@ from news_sources import (
     Article, collect_news, collect_sector_news, company_name, SECTOR_KO, YF_SECTOR_TO_ETF,
 )
 from news_summarize import summarize, DEFAULT_MODEL, SECTOR_SYSTEM_PROMPT
+from job_guard import already_done, mark_done
 from notify import send_telegram_message
 
+JOB = "news_briefing"
 KST = ZoneInfo("Asia/Seoul")
 TELEGRAM_LIMIT = 3800
 SENTIMENT_EMOJI = {"호재": "🟢", "악재": "🔴", "중립": "⚪"}
@@ -158,6 +160,14 @@ def main() -> None:
     api_key = os.environ.get("GEMINI_API_KEY", "").strip()
     model = os.environ.get("GEMINI_MODEL", "").strip() or DEFAULT_MODEL
 
+    # schedule은 정시에 돌지 않고 늦거나 건너뛰어지므로 서로 다른 시각의 슬롯을 여러 개 두고,
+    # 오늘(KST) 이미 보냈다면 건너뛴다. 수동 실행(workflow_dispatch)과 dry-run은 검사/기록 모두 하지 않는다.
+    track = not dry_run and os.environ.get("GITHUB_EVENT_NAME", "") != "workflow_dispatch"
+    day_key = now.astimezone(KST).strftime("%Y-%m-%d")
+    if track and already_done(JOB, day_key):
+        print(f"{day_key} 뉴스 브리핑은 이미 발송했습니다. 건너뜁니다.")
+        return
+
     trades = load_trades()
     open_trades = trades[(trades["status"] == "OPEN") & (~trades["archived"])] if not trades.empty else trades
     if open_trades.empty:
@@ -166,6 +176,8 @@ def main() -> None:
                "현재 진행중인 보유 종목이 없습니다.")
         if not dry_run and not send_telegram_message(msg, parse_mode="HTML", disable_web_page_preview=True):
             sys.exit(1)
+        if track:
+            mark_done(JOB, day_key)
         return
     names_hint = {}
     for _, t in open_trades.iterrows():
@@ -214,6 +226,8 @@ def main() -> None:
     if not ok:
         print("텔레그램 발송 실패")
         sys.exit(1)  # Actions 실행을 실패로 표시해 알림 장애를 바로 알아볼 수 있게 한다
+    if track:
+        mark_done(JOB, day_key)
 
 
 if __name__ == "__main__":

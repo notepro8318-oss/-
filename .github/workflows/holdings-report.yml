@@ -2,13 +2,21 @@ name: Holdings Report
 
 on:
   schedule:
-    # 평일 21:45 UTC — 미국 정규장(4:00pm ET) 마감 이후 일봉이 집계된 뒤
-    # (서머타임 EDT 마감 20:00 UTC, 표준시 EST 마감 21:00 UTC 둘 다 이후)
-    - cron: "45 21 * * 1-5"
+    # 미국 정규장(4:00pm ET) 마감 후 일봉이 확정된 뒤 거래일당 1회.
+    # GitHub 스케줄은 수 시간 늦어지거나 건너뛰어지므로 서로 다른 시각의 슬롯 3개를 두고, 먼저 도착한 실행이
+    # 발송하면 나머지는 holdings_report.py의 job_guard 검사(마지막 마감 거래일 기준)로 건너뛴다.
+    # 표준시(EST, 마감 21:00 UTC)에는 첫 슬롯이 마감 전이라 스크립트가 스스로 보류한다.
+    - cron: "47 20 * * 1-5"
+    - cron: "17 22 * * 1-5"
+    - cron: "47 23 * * 1-5"
   workflow_dispatch: {}
 
 permissions:
-  contents: read
+  contents: write   # 발송 완료 기록(job_state/holdings_report.json) 저장용
+
+concurrency:
+  group: holdings-report
+  cancel-in-progress: false
 
 jobs:
   holdings-report:

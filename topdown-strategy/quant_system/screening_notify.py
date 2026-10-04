@@ -14,11 +14,15 @@ screening.compute_screening_snapshot()로 오늘의 매수 후보(종목/진입�
 from __future__ import annotations
 
 import os
+import sys
 
 import requests
 
 from qs_config import INITIAL_EQUITY, DEFAULT_SIDEWAYS_MODE, SIDEWAYS_MODES
+from job_guard import already_done, mark_done, latest_completed_us_session
 from screening import compute_screening_snapshot, load_snapshot, save_snapshot, diff_snapshots
+
+JOB = "screening"
 
 
 def send_telegram_message(text: str) -> bool:
@@ -58,6 +62,18 @@ def format_message(snapshot: dict, changes: list[str]) -> str:
 
 
 def main() -> None:
+    # schedule은 정시에 돌지 않고 늦거나 건너뛰어지므로 서로 다른 시각의 슬롯을 여러 개 두고,
+    # '마감이 확정된 마지막 미국 거래일' 하나당 한 번만 실행한다. 수동 실행은 검사/기록을 하지 않는다.
+    manual = os.environ.get("GITHUB_EVENT_NAME", "") == "workflow_dispatch"
+    session = latest_completed_us_session()
+    if not manual:
+        if session is None:
+            print("미국 정규장이 아직 마감되지 않았거나(또는 일봉 미집계) 시세를 못 불러와 스크리닝을 보류합니다.")
+            return
+        if already_done(JOB, str(session)):
+            print(f"{session} 거래일 스크리닝은 이미 처리했습니다. 건너뜁니다.")
+            return
+
     capital = float(os.environ.get("SCREENING_CAPITAL_USD") or INITIAL_EQUITY)
     mode = (os.environ.get("SIDEWAYS_SECTOR_MODE") or DEFAULT_SIDEWAYS_MODE).strip().upper()
     if mode not in SIDEWAYS_MODES:
@@ -71,10 +87,15 @@ def main() -> None:
     for c in changes:
         print(c)
 
-    if changes:
-        send_telegram_message(format_message(new_snapshot, changes))
+    if changes and not send_telegram_message(format_message(new_snapshot, changes)):
+        # 발송에 실패했는데 스냅샷을 저장하면 이 변경 사항이 영영 알림되지 않는다.
+        # 저장/완료 기록 없이 실패로 끝내 다음 슬롯이 다시 시도하게 한다.
+        print("텔레그램 발송 실패 - 스냅샷을 저장하지 않고 다음 실행에서 다시 시도합니다.")
+        sys.exit(1)
 
     save_snapshot(new_snapshot)
+    if not manual:
+        mark_done(JOB, str(session))
 
 
 if __name__ == "__main__":

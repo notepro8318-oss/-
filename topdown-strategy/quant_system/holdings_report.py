@@ -16,9 +16,6 @@ GitHub Actions 스케줄러 진입점 — 미국 장마감 후 매매일지 보�
 from __future__ import annotations
 
 import os
-from datetime import datetime
-from zoneinfo import ZoneInfo
-
 import pandas as pd
 
 from data import fetch_ohlcv
@@ -26,9 +23,11 @@ from journal import (
     load_trades, load_signals, get_dashboard_metrics, sector_of,
     SIGNAL_LABELS, EXIT_SIGNAL_TYPES,
 )
+from job_guard import already_done, mark_done, latest_completed_us_session
 from notify import send_telegram_message
 from qs_config import BENCHMARK
 
+JOB = "holdings_report"
 TELEGRAM_LIMIT = 3800  # 텔레그램 메시지 상한(4096자)보다 여유를 둔다
 PHASE_EMOJI = {"STAGE_0": "🟡", "STAGE_1": "🔵", "STAGE_2": "🟢"}
 
@@ -105,32 +104,34 @@ def build_report(open_trades: pd.DataFrame, signals_df: pd.DataFrame, report_dat
     return messages
 
 
-def market_was_open_today() -> bool:
-    """SPY의 마지막 일봉 날짜가 미국 동부시간 기준 오늘이면 정규장이 열렸던 날로 본다."""
-    df = fetch_ohlcv(BENCHMARK, period="5d")
-    if df.empty:
-        return False
-    return df.index[-1].date() == datetime.now(ZoneInfo("America/New_York")).date()
-
-
 def main() -> None:
     force = os.environ.get("FORCE_REPORT", "").strip().lower() in ("1", "true", "yes")
-    if not force and not market_was_open_today():
-        print("오늘은 미국 증시 휴장일(또는 일봉 미집계)이라 보유 현황 리포트를 보내지 않습니다.")
-        return
+    session = latest_completed_us_session()
+    if not force:
+        if session is None:
+            print("미국 정규장이 아직 마감되지 않았거나(또는 일봉 미집계) 시세를 못 불러와 보유 현황 리포트를 보류합니다.")
+            return
+        if already_done(JOB, str(session)):
+            print(f"{session} 거래일 보유 현황 리포트는 이미 발송했습니다. 건너뜁니다.")
+            return
+    if session is None:  # 수동 실행(force)이라 마감 전이어도 가장 최근 일봉 기준으로 만든다
+        session = fetch_ohlcv(BENCHMARK, period="5d").index[-1].date()
 
     trades = load_trades()
     open_trades = trades[(trades["status"] == "OPEN") & (~trades["archived"])] if not trades.empty else trades
     if not open_trades.empty:
         open_trades = open_trades.sort_values("entry_date", kind="stable")
-    last_bar = fetch_ohlcv(BENCHMARK, period="5d").index[-1].date()
 
-    for text in build_report(open_trades, load_signals(), str(last_bar)):
+    all_sent = True
+    for text in build_report(open_trades, load_signals(), str(session)):
         print(text, "\n")
         # 종목/단계 이름에 '_' 등이 있어 Markdown 파싱 오류가 나지 않도록 일반 텍스트로 보낸다.
         if not send_telegram_message(text, parse_mode=None):
             print("발송 실패 - 이후 조각 발송을 중단합니다.")
+            all_sent = False
             break
+    if all_sent and not force:
+        mark_done(JOB, str(session))
 
 
 if __name__ == "__main__":

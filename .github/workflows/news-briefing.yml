@@ -2,8 +2,13 @@ name: News Briefing
 
 on:
   schedule:
-    # 매일 21:00 UTC = 다음날 06:00 KST. (GitHub 스케줄은 혼잡 시 수 분~수십 분 지연될 수 있음)
-    - cron: "0 21 * * *"
+    # 목표: 매일 06:00 KST(=21:00 UTC) 무렵 도착.
+    # GitHub 스케줄은 정시에 실행되지 않고 수 시간 늦어지거나 건너뛰어지는 일이 잦다(이 저장소는 21~23시 UTC 슬롯이
+    # 2~3시간 늦은 적이 많음). 그래서 06:00 KST보다 일찍 시작하는 슬롯 + 백업 슬롯을 두고, 먼저 도착한 실행이
+    # 발송하면 나머지는 news_briefing.py의 job_guard 검사로 건너뛴다. 정각(:00/:30)은 부하가 몰려 피한다.
+    - cron: "23 20 * * *"   # 05:23 KST (지연되면 06:00 전후에 도착)
+    - cron: "47 21 * * *"   # 06:47 KST (백업)
+    - cron: "13 23 * * *"   # 08:13 KST (백업)
   workflow_dispatch:
     inputs:
       dry_run:
@@ -12,7 +17,7 @@ on:
         default: false
 
 permissions:
-  contents: read
+  contents: write   # 발송 완료 기록(job_state/news_briefing.json) 저장용
 
 concurrency:
   group: news-briefing
