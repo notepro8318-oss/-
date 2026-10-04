@@ -12,7 +12,7 @@ Gemini 키가 없거나 호출이 실패하면 요약 없이 기사 제목(링�
 - GITHUB_TOKEN: 매매일지 CSV 읽기용
 - TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID: 발송용
 - GEMINI_API_KEY: 요약용 (선택 — 없으면 제목만 발송)
-- GEMINI_MODEL (선택, repo Variable): 기본 gemini-2.5-flash
+- GEMINI_MODEL (선택, repo Variable): 기본 gemini-3.8-flash
 - NEWS_WINDOW_HOURS (선택): 기사 수집 시간 범위, 기본 24
 - DRY_RUN=1: 텔레그램으로 보내지 않고 내용만 출력
 """
