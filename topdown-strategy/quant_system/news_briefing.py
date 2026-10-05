@@ -153,6 +153,27 @@ def _summarize_safely(label: str, news: dict[str, list[Article]], names: dict[st
         return None
 
 
+FINAL_SLOT_KST_HOUR = 8  # 이 시각(KST) 이후에 시작한 정기 실행은 마지막 기회로 보고 제목만이라도 발송한다
+
+
+def is_final_slot(now: datetime) -> bool:
+    """정기 실행 중 '더 이상 미룰 수 없는' 마지막 슬롯인지. 워크플로가 마지막 cron이면 FINAL_SLOT=1을 주고,
+    앞 슬롯이 GitHub 지연으로 08:00 KST 이후에 시작해도 마지막 기회로 취급한다."""
+    return os.environ.get("FINAL_SLOT", "").strip() == "1" or now.astimezone(KST).hour >= FINAL_SLOT_KST_HOUR
+
+
+def should_defer(api_key: str, stock_articles: bool, summaries: dict | None, sector_articles: bool,
+                 sector_summaries: dict | None, track: bool, final_slot: bool) -> bool:
+    """AI 요약에 실패했을 때 이번 정기 슬롯의 발송을 미루고 다음 슬롯이 다시 시도하게 할지 결정한다.
+
+    - Gemini 키가 아예 없으면(설정 문제) 기다려도 소용없으므로 미루지 않는다.
+    - 수동 실행/dry-run(track=False)과 마지막 슬롯은 미루지 않고 제목만이라도 보낸다.
+    """
+    if not api_key or not track or final_slot:
+        return False
+    return (stock_articles and summaries is None) or (sector_articles and sector_summaries is None)
+
+
 def main() -> None:
     now = datetime.now(timezone.utc)
     hours = float(os.environ.get("NEWS_WINDOW_HOURS") or 24)
@@ -212,6 +233,13 @@ def main() -> None:
     sector_names = {etf: f"{SECTOR_KO.get(etf, etf)} 섹터({etf})" for etf, _ in sectors}
     sector_summaries = _summarize_safely("섹터", {e: a for e, a in sector_news.items() if a}, sector_names,
                                          api_key, model, dry_run, system_prompt=SECTOR_SYSTEM_PROMPT)
+
+    if should_defer(api_key, any(news.values()), summaries, any(sector_news.values()), sector_summaries,
+                    track, is_final_slot(now)):
+        # 오늘 오전 Gemini 과부하로 종목 부분이 제목만 나간 일이 있었다. 앞 슬롯이면 발송도 완료 기록도 하지 않고
+        # 정상 종료해, 06:47/08:13 슬롯이 요약된 브리핑을 다시 시도하게 한다(마지막 슬롯은 제목만이라도 발송).
+        print("AI 요약에 실패해 이번 슬롯은 발송하지 않습니다. 다음 슬롯에서 다시 시도합니다.")
+        return
 
     messages = build_briefing(tickers, news, errors, summaries, now, sectors, sector_news, sector_errors,
                               sector_summaries)

@@ -44,5 +44,7 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GEMINI_MODEL: ${{ vars.GEMINI_MODEL }}
           DRY_RUN: ${{ github.event.inputs.dry_run == 'true' && '1' || '' }}
+          # 마지막 cron 슬롯이면 AI 요약에 실패해도 제목만이라도 발송한다(앞 슬롯은 실패 시 다음 슬롯에 재시도를 맡김).
+          FINAL_SLOT: ${{ github.event.schedule == '13 23 * * *' && '1' || '' }}
         working-directory: topdown-strategy/quant_system
         run: python news_briefing.py
