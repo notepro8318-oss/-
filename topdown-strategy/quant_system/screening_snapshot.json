@@ -1,5 +1,5 @@
 {
-  "date": "2026-10-01",
+  "date": "2026-10-02",
   "regime": "SIDEWAYS",
   "sideways_mode": "HYBRID",
   "leaders": [
@@ -10,40 +10,40 @@
     {
       "ticker": "AMD",
       "sector": "XLK",
-      "entry_price": 615.73,
-      "stop": 551.54,
-      "weight_pct": 38.8,
-      "shares": 25
+      "entry_price": 633.91,
+      "stop": 570.81,
+      "weight_pct": 43.1,
+      "shares": 27
     },
     {
       "ticker": "NVDA",
       "sector": "XLK",
-      "entry_price": 230.86,
-      "stop": 217.57,
-      "weight_pct": 18.3,
+      "entry_price": 233.95,
+      "stop": 221.08,
+      "weight_pct": 18.7,
       "shares": 31
-    },
-    {
-      "ticker": "TMO",
-      "sector": "XLV",
-      "entry_price": 652.51,
-      "stop": 612.09,
-      "weight_pct": 17.8,
-      "shares": 10
     },
     {
       "ticker": "MRK",
       "sector": "XLV",
-      "entry_price": 143.81,
-      "stop": 135.56,
+      "entry_price": 144.3,
+      "stop": 136.32,
       "weight_pct": 14.8,
-      "shares": 41
+      "shares": 40
+    },
+    {
+      "ticker": "TMO",
+      "sector": "XLV",
+      "entry_price": 654.8,
+      "stop": 614.23,
+      "weight_pct": 13.0,
+      "shares": 7
     },
     {
       "ticker": "AAPL",
       "sector": "XLK",
-      "entry_price": 330.32,
-      "stop": 314.07,
+      "entry_price": 333.69,
+      "stop": 317.43,
       "weight_pct": 10.4,
       "shares": 12
     }
