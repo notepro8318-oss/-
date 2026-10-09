@@ -1,51 +1,51 @@
 {
-  "date": "2026-10-07",
+  "date": "2026-10-08",
   "regime": "BULL",
   "sideways_mode": "HYBRID",
   "leaders": [
-    "XLK",
-    "XLE"
+    "XLC",
+    "XLP"
   ],
   "candidates": [
     {
-      "ticker": "MPC",
-      "sector": "XLE",
-      "entry_price": 442.26,
-      "stop": 401.24,
-      "weight_pct": 36.8,
-      "shares": 83
+      "ticker": "PM",
+      "sector": "XLP",
+      "entry_price": 200.5,
+      "stop": 189.22,
+      "weight_pct": 35.5,
+      "shares": 176
     },
     {
-      "ticker": "VLO",
-      "sector": "XLE",
-      "entry_price": 424.1,
-      "stop": 382.37,
-      "weight_pct": 25.2,
-      "shares": 59
+      "ticker": "KO",
+      "sector": "XLP",
+      "entry_price": 87.77,
+      "stop": 84.54,
+      "weight_pct": 22.3,
+      "shares": 254
     },
     {
-      "ticker": "AMD",
-      "sector": "XLK",
-      "entry_price": 645.86,
-      "stop": 586.6,
-      "weight_pct": 19.9,
-      "shares": 30
+      "ticker": "TGT",
+      "sector": "XLP",
+      "entry_price": 154.76,
+      "stop": 145.78,
+      "weight_pct": 19.4,
+      "shares": 125
     },
     {
-      "ticker": "PSX",
-      "sector": "XLE",
-      "entry_price": 271.62,
-      "stop": 249.16,
-      "weight_pct": 12.0,
-      "shares": 44
+      "ticker": "MO",
+      "sector": "XLP",
+      "entry_price": 71.42,
+      "stop": 68.13,
+      "weight_pct": 12.6,
+      "shares": 175
     },
     {
-      "ticker": "XOM",
-      "sector": "XLE",
-      "entry_price": 164.05,
-      "stop": 155.7,
-      "weight_pct": 6.1,
-      "shares": 37
+      "ticker": "META",
+      "sector": "XLC",
+      "entry_price": 720.89,
+      "stop": 652.31,
+      "weight_pct": 10.2,
+      "shares": 14
     }
   ]
 }
