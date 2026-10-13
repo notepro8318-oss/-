@@ -1,51 +1,51 @@
 {
-  "date": "2026-10-09",
+  "date": "2026-10-12",
   "regime": "BULL",
   "sideways_mode": "HYBRID",
   "leaders": [
     "XLV",
-    "XLP"
+    "XLE"
   ],
   "candidates": [
     {
-      "ticker": "MRK",
-      "sector": "XLV",
-      "entry_price": 145.6,
-      "stop": 136.38,
-      "weight_pct": 26.5,
-      "shares": 182
+      "ticker": "MPC",
+      "sector": "XLE",
+      "entry_price": 458.81,
+      "stop": 417.61,
+      "weight_pct": 29.6,
+      "shares": 64
     },
     {
-      "ticker": "PM",
-      "sector": "XLP",
-      "entry_price": 201.19,
-      "stop": 189.96,
-      "weight_pct": 20.1,
-      "shares": 99
+      "ticker": "PSX",
+      "sector": "XLE",
+      "entry_price": 281.47,
+      "stop": 259.68,
+      "weight_pct": 22.4,
+      "shares": 79
     },
     {
-      "ticker": "TMO",
-      "sector": "XLV",
-      "entry_price": 658.02,
-      "stop": 608.58,
-      "weight_pct": 19.1,
-      "shares": 29
+      "ticker": "VLO",
+      "sector": "XLE",
+      "entry_price": 436.0,
+      "stop": 393.55,
+      "weight_pct": 20.0,
+      "shares": 45
     },
     {
-      "ticker": "ABBV",
-      "sector": "XLV",
-      "entry_price": 276.47,
-      "stop": 262.04,
-      "weight_pct": 18.7,
-      "shares": 67
+      "ticker": "XOM",
+      "sector": "XLE",
+      "entry_price": 172.15,
+      "stop": 163.93,
+      "weight_pct": 15.8,
+      "shares": 91
     },
     {
-      "ticker": "AMGN",
-      "sector": "XLV",
-      "entry_price": 414.87,
-      "stop": 387.54,
-      "weight_pct": 15.5,
-      "shares": 37
+      "ticker": "CVX",
+      "sector": "XLE",
+      "entry_price": 215.0,
+      "stop": 204.68,
+      "weight_pct": 12.1,
+      "shares": 56
     }
   ]
 }
