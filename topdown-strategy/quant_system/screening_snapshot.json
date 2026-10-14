@@ -1,51 +1,51 @@
 {
-  "date": "2026-10-12",
+  "date": "2026-10-13",
   "regime": "BULL",
   "sideways_mode": "HYBRID",
   "leaders": [
-    "XLV",
-    "XLE"
+    "XLE",
+    "XLV"
   ],
   "candidates": [
     {
       "ticker": "MPC",
       "sector": "XLE",
-      "entry_price": 458.81,
-      "stop": 417.61,
-      "weight_pct": 29.6,
-      "shares": 64
-    },
-    {
-      "ticker": "PSX",
-      "sector": "XLE",
-      "entry_price": 281.47,
-      "stop": 259.68,
-      "weight_pct": 22.4,
-      "shares": 79
+      "entry_price": 476.98,
+      "stop": 436.32,
+      "weight_pct": 35.9,
+      "shares": 75
     },
     {
       "ticker": "VLO",
       "sector": "XLE",
-      "entry_price": 436.0,
-      "stop": 393.55,
-      "weight_pct": 20.0,
-      "shares": 45
+      "entry_price": 456.46,
+      "stop": 414.34,
+      "weight_pct": 24.6,
+      "shares": 53
+    },
+    {
+      "ticker": "PSX",
+      "sector": "XLE",
+      "entry_price": 292.73,
+      "stop": 271.32,
+      "weight_pct": 19.4,
+      "shares": 66
+    },
+    {
+      "ticker": "COP",
+      "sector": "XLE",
+      "entry_price": 140.9,
+      "stop": 133.27,
+      "weight_pct": 10.1,
+      "shares": 72
     },
     {
       "ticker": "XOM",
       "sector": "XLE",
-      "entry_price": 172.15,
-      "stop": 163.93,
-      "weight_pct": 15.8,
-      "shares": 91
-    },
-    {
-      "ticker": "CVX",
-      "sector": "XLE",
-      "entry_price": 215.0,
-      "stop": 204.68,
-      "weight_pct": 12.1,
-      "shares": 56
+      "entry_price": 174.08,
+      "stop": 165.98,
+      "weight_pct": 9.9,
+      "shares": 57
     }
   ]
 }
