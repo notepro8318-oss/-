@@ -186,8 +186,11 @@ def _curve_stats(eq: pd.Series) -> dict:
     }
 
 
-def _sector_history_chart(price_data: dict, leaders: list):
-    """섹터 ETF 11개의 최근 1년 등락(1년 전 종가 대비 수익률, %) 선그래프를 만든다.
+SECTOR_PERIODS = {"1개월": 21, "3개월": 63, "6개월": 126, "1년": 252}   # 라벨 -> 거래일 수
+
+
+def _sector_history_chart(price_data: dict, leaders: list, days: int = 252, period_label: str = "1년"):
+    """섹터 ETF 11개의 최근 days거래일 등락(기간 시작일 종가 대비 수익률, %) 선그래프를 만든다.
 
     주도 섹터는 굵은 선과 ★ 표시로 강조하고, 범례를 클릭하면 해당 섹터만 선명하게 볼 수 있다.
     """
@@ -196,7 +199,7 @@ def _sector_history_chart(price_data: dict, leaders: list):
     closes = pd.DataFrame({etf: df["Close"] for etf, df in price_data.items() if df is not None and not df.empty})
     if closes.empty:
         return None
-    closes = closes.sort_index().ffill().tail(253)          # 약 1년(거래일 252일 + 기준일)
+    closes = closes.sort_index().ffill().tail(days + 1)      # 기간 시작 기준일 + days거래일
     pct = (closes / closes.iloc[0] - 1) * 100
     pct.index.name = "date"
     long = pct.reset_index().melt(id_vars="date", var_name="etf", value_name="ret")
@@ -208,17 +211,48 @@ def _sector_history_chart(price_data: dict, leaders: list):
         alt.Chart(long).mark_line()
         .encode(
             x=alt.X("date:T", title=None),
-            y=alt.Y("ret:Q", title="1년 전 대비 수익률 (%)"),
+            y=alt.Y("ret:Q", title=f"{period_label} 전 대비 수익률 (%)"),
             color=alt.Color("sector:N", title=None, sort=alt.SortField("etf")),
             strokeWidth=alt.condition(alt.datum.leader, alt.value(3.5), alt.value(1.4)),
             opacity=alt.condition(pick, alt.value(1.0), alt.value(0.15)),
             tooltip=[alt.Tooltip("date:T", title="날짜"), alt.Tooltip("sector:N", title="섹터"),
-                     alt.Tooltip("ret:Q", title="1년 전 대비(%)", format="+.1f")],
+                     alt.Tooltip("ret:Q", title=f"{period_label} 전 대비(%)", format="+.1f")],
         )
         .add_params(pick)
     )
     zero = alt.Chart(pd.DataFrame({"y": [0]})).mark_rule(color="gray", strokeDash=[4, 4]).encode(y="y:Q")
     return (zero + lines).properties(height=420)
+
+
+def _sector_drawdown_table(price_data: dict, leaders: list, days: int = 252) -> pd.DataFrame:
+    """선택 기간(최근 days거래일) 안에서 섹터별 고점(최고 종가) 대비 현재 낙폭과 고점 이후 경과 기간을 계산한다.
+
+    - 하락 포인트 = 고점 종가 - 현재가 (ETF 가격 기준 달러)
+    - 하락 기간 = 고점일부터 가장 최근 거래일까지 (달력일 / 거래일)
+    고점이 오늘이면 하락 포인트와 기간은 0이다. 낙폭이 큰 섹터가 위로 오도록 정렬한다.
+    """
+    rows = []
+    for etf, df in price_data.items():
+        if df is None or df.empty:
+            continue
+        close = df["Close"].dropna().tail(days + 1)
+        if len(close) < 2:
+            continue
+        peak_date, peak = close.idxmax(), float(close.max())
+        last_date, last = close.index[-1], float(close.iloc[-1])
+        rows.append({
+            "섹터": ("★ " if etf in leaders else "") + f"{etf} {SECTOR_NAMES_KO.get(etf, '')}".strip(),
+            "고점일": peak_date.strftime("%Y-%m-%d"),
+            "고점": peak,
+            "현재가": last,
+            "하락 포인트": last - peak,
+            "고점 대비(%)": (last / peak - 1) * 100,
+            "하락 기간(일)": (last_date - peak_date).days,
+            "하락 기간(거래일)": len(close.loc[peak_date:]) - 1,
+        })
+    if not rows:
+        return pd.DataFrame()
+    return pd.DataFrame(rows).sort_values("고점 대비(%)").set_index("섹터")
 
 
 def fmt_pct(v: float) -> str:
@@ -751,12 +785,29 @@ if tab_screening.open:
         else:
             st.info("BEAR 국면이거나 조건을 만족하는 주도 섹터가 없습니다.")
 
-        st.markdown("**📈 섹터별 1년 등락**")
-        sector_chart = _sector_history_chart(sector_price_data, leaders)
+        period_label = st.radio("조회 기간", list(SECTOR_PERIODS), index=len(SECTOR_PERIODS) - 1, horizontal=True,
+                                key="sector_chart_period")
+        period_days = SECTOR_PERIODS[period_label]
+        st.markdown(f"**📈 섹터별 {period_label} 등락**")
+        sector_chart = _sector_history_chart(sector_price_data, leaders, period_days, period_label)
         if sector_chart is not None:
             st.altair_chart(sector_chart, use_container_width=True)
-            st.caption("1년 전 종가를 0%로 맞춘 누적 수익률입니다. 굵은 선(★)이 현재 주도 섹터이고, "
+            st.caption(f"{period_label} 전 종가를 0%로 맞춘 누적 수익률입니다. 굵은 선(★)이 현재 주도 섹터이고, "
                        "범례의 섹터명을 클릭하면 그 섹터만 강조됩니다.")
+
+            dd_table = _sector_drawdown_table(sector_price_data, leaders, period_days)
+            if not dd_table.empty:
+                st.markdown(f"**📉 고점 대비 하락 현황 ({period_label} 기준)**")
+                st.dataframe(
+                    dd_table.style.format({
+                        "고점": "${:,.2f}", "현재가": "${:,.2f}", "하락 포인트": "{:+,.2f}",
+                        "고점 대비(%)": "{:+.2f}%", "하락 기간(일)": "{:,}일", "하락 기간(거래일)": "{:,}일",
+                    }).background_gradient(subset=["고점 대비(%)"], cmap="Reds_r"),
+                    use_container_width=True,
+                )
+                st.caption(f"고점 = 선택한 {period_label} 동안의 최고 종가입니다. 하락 포인트는 고점 종가 대비 현재가 차이(달러), "
+                           "하락 기간은 고점일부터 가장 최근 거래일까지의 기간이며 낙폭이 큰 섹터가 위에 표시됩니다. "
+                           "고점이 최근 거래일이면 0으로 표시됩니다.")
         else:
             st.info("섹터 시세를 불러오지 못해 차트를 표시할 수 없습니다.")
 
