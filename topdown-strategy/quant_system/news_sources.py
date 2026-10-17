@@ -20,6 +20,8 @@ from email.utils import parsedate_to_datetime
 
 import requests
 
+from qs_config import SECTOR_NAMES_KO
+
 GOOGLE_NEWS_RSS = "https://news.google.com/rss/search"
 USER_AGENT = "Mozilla/5.0 (compatible; TopDownQuantSystem-news/1.0)"
 # 뉴스 기사가 아닌 시세/종목 소개/토큰화 상품 페이지
@@ -134,10 +136,7 @@ def collect_news(ticker: str, name: str, now: datetime, hours: float = 24, limit
 # ---------------------------------------------------------------------------
 # 섹터 뉴스 (보유 종목이 속한 주요 섹터의 업종 전반 동향)
 # ---------------------------------------------------------------------------
-SECTOR_KO = {
-    "XLK": "기술", "XLV": "헬스케어", "XLF": "금융", "XLY": "경기소비재", "XLP": "필수소비재", "XLI": "산업재",
-    "XLE": "에너지", "XLU": "유틸리티", "XLRE": "부동산", "XLB": "소재", "XLC": "커뮤니케이션",
-}
+SECTOR_KO = SECTOR_NAMES_KO
 SECTOR_EN = {
     "XLK": "Technology", "XLV": "Health Care", "XLF": "Financials", "XLY": "Consumer Discretionary",
     "XLP": "Consumer Staples", "XLI": "Industrials", "XLE": "Energy", "XLU": "Utilities",

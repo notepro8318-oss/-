@@ -47,7 +47,7 @@ if getattr(sys, "_qs_src_sig", None) != _src_sig:
     sys._qs_src_sig = _src_sig
 
 from qs_config import (
-    BENCHMARK, SECTOR_ETFS, DEFENSIVE_ETFS, OFFENSIVE_ETFS, SECTOR_STOCKS,
+    BENCHMARK, SECTOR_ETFS, SECTOR_NAMES_KO, DEFENSIVE_ETFS, OFFENSIVE_ETFS, SECTOR_STOCKS,
     SIDEWAYS_MODE_DEFENSIVE, SIDEWAYS_MODE_HYBRID, DEFAULT_SIDEWAYS_MODE,
     ROC_SHORT, ROC_LONG, TOP_SECTOR_COUNT, TOP_STOCK_COUNT,
     STOP_ATR_MULT_V2, TP1_PCT, TP1_FRACTION, TP2_PCT, TP2_FRACTION, RUNNER_EXIT_MA_PERIOD,
@@ -125,7 +125,7 @@ def load_regime(_bench_df):
 
 @st.cache_data(ttl=CACHE_TTL, show_spinner=False)
 def load_sector_scores():
-    data = {etf: fetch_ohlcv(etf, period="6mo") for etf in SECTOR_ETFS}
+    data = {etf: fetch_ohlcv(etf, period="1y") for etf in SECTOR_ETFS}
     return sector_engine.score_sectors(data), data
 
 
@@ -184,6 +184,41 @@ def _curve_stats(eq: pd.Series) -> dict:
         "mdd": (eq / eq.cummax() - 1).min() * 100,
         "sharpe": (daily.mean() * 252) / vol if vol > 0 else float("nan"),
     }
+
+
+def _sector_history_chart(price_data: dict, leaders: list):
+    """섹터 ETF 11개의 최근 1년 등락(1년 전 종가 대비 수익률, %) 선그래프를 만든다.
+
+    주도 섹터는 굵은 선과 ★ 표시로 강조하고, 범례를 클릭하면 해당 섹터만 선명하게 볼 수 있다.
+    """
+    import altair as alt
+
+    closes = pd.DataFrame({etf: df["Close"] for etf, df in price_data.items() if df is not None and not df.empty})
+    if closes.empty:
+        return None
+    closes = closes.sort_index().ffill().tail(253)          # 약 1년(거래일 252일 + 기준일)
+    pct = (closes / closes.iloc[0] - 1) * 100
+    pct.index.name = "date"
+    long = pct.reset_index().melt(id_vars="date", var_name="etf", value_name="ret")
+    long["sector"] = long["etf"].map(lambda e: ("★ " if e in leaders else "") + f"{e} {SECTOR_NAMES_KO.get(e, '')}".strip())
+    long["leader"] = long["etf"].isin(leaders)
+
+    pick = alt.selection_point(fields=["sector"], bind="legend")
+    lines = (
+        alt.Chart(long).mark_line()
+        .encode(
+            x=alt.X("date:T", title=None),
+            y=alt.Y("ret:Q", title="1년 전 대비 수익률 (%)"),
+            color=alt.Color("sector:N", title=None, sort=alt.SortField("etf")),
+            strokeWidth=alt.condition(alt.datum.leader, alt.value(3.5), alt.value(1.4)),
+            opacity=alt.condition(pick, alt.value(1.0), alt.value(0.15)),
+            tooltip=[alt.Tooltip("date:T", title="날짜"), alt.Tooltip("sector:N", title="섹터"),
+                     alt.Tooltip("ret:Q", title="1년 전 대비(%)", format="+.1f")],
+        )
+        .add_params(pick)
+    )
+    zero = alt.Chart(pd.DataFrame({"y": [0]})).mark_rule(color="gray", strokeDash=[4, 4]).encode(y="y:Q")
+    return (zero + lines).properties(height=420)
 
 
 def fmt_pct(v: float) -> str:
@@ -715,6 +750,15 @@ if tab_screening.open:
             st.write(" ".join(f"🏆 **{t}**" for t in leaders))
         else:
             st.info("BEAR 국면이거나 조건을 만족하는 주도 섹터가 없습니다.")
+
+        st.markdown("**📈 섹터별 1년 등락**")
+        sector_chart = _sector_history_chart(sector_price_data, leaders)
+        if sector_chart is not None:
+            st.altair_chart(sector_chart, use_container_width=True)
+            st.caption("1년 전 종가를 0%로 맞춘 누적 수익률입니다. 굵은 선(★)이 현재 주도 섹터이고, "
+                       "범례의 섹터명을 클릭하면 그 섹터만 강조됩니다.")
+        else:
+            st.info("섹터 시세를 불러오지 못해 차트를 표시할 수 없습니다.")
 
         def _format_score_table(df):
             disp = df.copy()

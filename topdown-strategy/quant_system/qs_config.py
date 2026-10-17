@@ -28,6 +28,10 @@ MAX_POSITIONS_BULL = 5
 # Sector Rotation (GICS 11 Sector ETFs)
 # ------------------------------------------------------------------
 SECTOR_ETFS = ["XLK", "XLC", "XLF", "XLI", "XLE", "XLY", "XLP", "XLV", "XLU", "XLRE", "XLB"]
+SECTOR_NAMES_KO = {
+    "XLK": "기술", "XLV": "헬스케어", "XLF": "금융", "XLY": "경기소비재", "XLP": "필수소비재", "XLI": "산업재",
+    "XLE": "에너지", "XLU": "유틸리티", "XLRE": "부동산", "XLB": "소재", "XLC": "커뮤니케이션",
+}
 DEFENSIVE_ETFS = ["XLU", "XLP", "XLV", "XLF"]
 OFFENSIVE_ETFS = [e for e in SECTOR_ETFS if e not in DEFENSIVE_ETFS]
 
