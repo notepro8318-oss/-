@@ -33,7 +33,9 @@ from datetime import date, datetime, timedelta
 
 import pandas as pd
 
-from qs_config import STOP_ATR_MULT_V2, TP1_PCT, TP1_FRACTION, TP2_PCT, TP2_FRACTION, SECTOR_STOCKS
+from qs_config import (
+    STOP_ATR_MULT_V2, TP1_PCT, TP1_FRACTION, TP2_PCT, TP2_FRACTION, SECTOR_STOCKS, YF_SECTOR_TO_ETF,
+)
 from data import fetch_ohlcv
 from execution import ExecutionEngine
 import github_store
@@ -495,6 +497,18 @@ def sector_of(ticker: str) -> str:
     """전략 유니버스(SECTOR_STOCKS)에 있는 종목이면 소속 섹터ETF를, 직접 등록한
     유니버스 밖 종목이면 '기타'를 반환한다."""
     return _TICKER_TO_SECTOR.get(str(ticker).strip().upper(), "기타")
+
+
+def resolve_sector(ticker: str) -> str:
+    """전략 유니버스에 있으면 그 섹터ETF, 없으면 yfinance의 sector 분류로 섹터ETF를 추정한다. 못 찾으면 '기타'."""
+    etf = sector_of(ticker)
+    if etf != "기타":
+        return etf
+    try:
+        import yfinance as yf
+        return YF_SECTOR_TO_ETF.get(yf.Ticker(ticker).info.get("sector") or "", "기타")
+    except Exception:
+        return "기타"
 
 
 def summarize_closed_trade(trade, exits_df: pd.DataFrame, signals_df: pd.DataFrame) -> dict:

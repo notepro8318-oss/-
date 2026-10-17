@@ -38,7 +38,7 @@ import streamlit as st
 # 새로 추가된 이름을 import하다 ImportError가 난다. 소스 파일이 바뀌었으면
 # 의존 순서대로 로컬 모듈을 다시 불러온다.
 _LOCAL_MODULES = ["qs_config", "data", "regime", "qs_sector", "screener", "execution",
-                  "risk", "github_store", "journal", "backtest_v2", "screening"]
+                  "sector_view", "risk", "github_store", "journal", "backtest_v2", "screening"]
 _src_sig = tuple(sorted((p.name, p.stat().st_mtime_ns) for p in Path(__file__).parent.glob("*.py")))
 if getattr(sys, "_qs_src_sig", None) != _src_sig:
     for _name in _LOCAL_MODULES:
@@ -60,12 +60,13 @@ from qs_sector import SectorRotationEngine
 from screener import MomentumRanker
 from execution import ExecutionEngine
 from risk import RiskManager
+from sector_view import PERIODS, sector_label, build_sector_table, table_view, line_chart, price_chart
 from journal import (
     load_trades, load_signals, preview_entry, add_trade, delete_trade,
     archive_trade, restore_trade,
     load_exits, add_exit, delete_exit, record_sale, undo_sale,
     scan_open_trades, confirm_signal, get_dashboard_metrics,
-    PHASE_LABELS, SIGNAL_LABELS, EXIT_SIGNAL_TYPES, summarize_closed_trade, sector_of,
+    PHASE_LABELS, SIGNAL_LABELS, EXIT_SIGNAL_TYPES, summarize_closed_trade, sector_of, resolve_sector,
 )
 import github_store
 
@@ -125,7 +126,7 @@ def load_regime(_bench_df):
 
 @st.cache_data(ttl=CACHE_TTL, show_spinner=False)
 def load_sector_scores():
-    data = {etf: fetch_ohlcv(etf, period="1y") for etf in SECTOR_ETFS}
+    data = {etf: fetch_ohlcv(etf, period="2y") for etf in SECTOR_ETFS}
     return sector_engine.score_sectors(data), data
 
 
@@ -186,73 +187,45 @@ def _curve_stats(eq: pd.Series) -> dict:
     }
 
 
-SECTOR_PERIODS = {"1개월": 21, "3개월": 63, "6개월": 126, "1년": 252}   # 라벨 -> 거래일 수
+@st.cache_data(ttl=86400, show_spinner=False)
+def _resolve_sector_cached(ticker: str) -> str:
+    return resolve_sector(ticker)
 
 
-def _sector_history_chart(price_data: dict, leaders: list, days: int = 252, period_label: str = "1년"):
-    """섹터 ETF 11개의 최근 days거래일 등락(기간 시작일 종가 대비 수익률, %) 선그래프를 만든다.
-
-    주도 섹터는 굵은 선과 ★ 표시로 강조하고, 범례를 클릭하면 해당 섹터만 선명하게 볼 수 있다.
-    """
-    import altair as alt
-
-    closes = pd.DataFrame({etf: df["Close"] for etf, df in price_data.items() if df is not None and not df.empty})
-    if closes.empty:
-        return None
-    closes = closes.sort_index().ffill().tail(days + 1)      # 기간 시작 기준일 + days거래일
-    pct = (closes / closes.iloc[0] - 1) * 100
-    pct.index.name = "date"
-    long = pct.reset_index().melt(id_vars="date", var_name="etf", value_name="ret")
-    long["sector"] = long["etf"].map(lambda e: ("★ " if e in leaders else "") + f"{e} {SECTOR_NAMES_KO.get(e, '')}".strip())
-    long["leader"] = long["etf"].isin(leaders)
-
-    pick = alt.selection_point(fields=["sector"], bind="legend")
-    lines = (
-        alt.Chart(long).mark_line()
-        .encode(
-            x=alt.X("date:T", title=None),
-            y=alt.Y("ret:Q", title=f"{period_label} 전 대비 수익률 (%)"),
-            color=alt.Color("sector:N", title=None, sort=alt.SortField("etf")),
-            strokeWidth=alt.condition(alt.datum.leader, alt.value(3.5), alt.value(1.4)),
-            opacity=alt.condition(pick, alt.value(1.0), alt.value(0.15)),
-            tooltip=[alt.Tooltip("date:T", title="날짜"), alt.Tooltip("sector:N", title="섹터"),
-                     alt.Tooltip("ret:Q", title=f"{period_label} 전 대비(%)", format="+.1f")],
-        )
-        .add_params(pick)
-    )
-    zero = alt.Chart(pd.DataFrame({"y": [0]})).mark_rule(color="gray", strokeDash=[4, 4]).encode(y="y:Q")
-    return (zero + lines).properties(height=420)
-
-
-def _sector_drawdown_table(price_data: dict, leaders: list, days: int = 252) -> pd.DataFrame:
-    """선택 기간(최근 days거래일) 안에서 섹터별 고점(최고 종가) 대비 현재 낙폭과 고점 이후 경과 기간을 계산한다.
-
-    - 하락 포인트 = 고점 종가 - 현재가 (ETF 가격 기준 달러)
-    - 하락 기간 = 고점일부터 가장 최근 거래일까지 (달력일 / 거래일)
-    고점이 오늘이면 하락 포인트와 기간은 0이다. 낙폭이 큰 섹터가 위로 오도록 정렬한다.
-    """
-    rows = []
-    for etf, df in price_data.items():
-        if df is None or df.empty:
+def _held_sector_info(open_df) -> dict:
+    """진행중 포지션을 매입원가(매수가×잔여수량) 기준으로 섹터별 {비중(%), 종목 목록}으로 집계한다."""
+    info, total = {}, 0.0
+    for _, t in open_df.iterrows():
+        cost = float(t["entry_price"]) * int(t["remaining_shares"])
+        total += cost
+        etf = _resolve_sector_cached(t["ticker"])
+        if etf == "기타":
             continue
-        close = df["Close"].dropna().tail(days + 1)
-        if len(close) < 2:
-            continue
-        peak_date, peak = close.idxmax(), float(close.max())
-        last_date, last = close.index[-1], float(close.iloc[-1])
-        rows.append({
-            "섹터": ("★ " if etf in leaders else "") + f"{etf} {SECTOR_NAMES_KO.get(etf, '')}".strip(),
-            "고점일": peak_date.strftime("%Y-%m-%d"),
-            "고점": peak,
-            "현재가": last,
-            "하락 포인트": last - peak,
-            "고점 대비(%)": (last / peak - 1) * 100,
-            "하락 기간(일)": (last_date - peak_date).days,
-            "하락 기간(거래일)": len(close.loc[peak_date:]) - 1,
-        })
-    if not rows:
-        return pd.DataFrame()
-    return pd.DataFrame(rows).sort_values("고점 대비(%)").set_index("섹터")
+        d = info.setdefault(etf, {"weight": 0.0, "tickers": []})
+        d["weight"] += cost
+        d["tickers"].append(t["ticker"])
+    for d in info.values():
+        d["weight"] = d["weight"] / total * 100 if total > 0 else 0.0
+    return info
+
+
+def _render_sector_table(view_df, gradient: str | None = None) -> None:
+    """섹터 상태 표 한 보기를 렌더링한다 (열 서식은 column_config, 낙폭 열은 색 그라데이션)."""
+    cc = st.column_config
+    num = lambda fmt: cc.NumberColumn(format=fmt)
+    config = {
+        "고점": num("$%.2f"), "현재가": num("$%.2f"), "하락 포인트": num("%+.2f"),
+        "고점 대비(%)": num("%+.2f%%"), "변동폭 대비(ATR배)": num("%.1f배"),
+        "하락 기간(일)": num("%d일"), "하락 기간(거래일)": num("%d일"),
+        "최대 낙폭(%)": num("%+.2f%%"), "저점 대비 반등(%)": num("%+.2f%%"),
+        "낙폭 회복률(%)": cc.ProgressColumn("낙폭 회복률", min_value=0, max_value=100, format="%.0f%%"),
+        "최근 5일(%)": num("%+.2f%%"), "일평균 하락률(%/일)": num("%+.2f%%"),
+        "보유 비중(%)": num("%.1f%%"), "기간 수익률(%)": num("%+.1f%%"), "SPY 대비(%p)": num("%+.1f%%p"),
+        "전략 순위": num("%d위"), "흐름": cc.LineChartColumn("흐름"),
+    }
+    data = view_df.style.background_gradient(subset=[gradient], cmap="Reds_r") if gradient else view_df
+    st.dataframe(data, column_config={k: v for k, v in config.items() if k in view_df.columns},
+                 use_container_width=True)
 
 
 def fmt_pct(v: float) -> str:
@@ -785,29 +758,62 @@ if tab_screening.open:
         else:
             st.info("BEAR 국면이거나 조건을 만족하는 주도 섹터가 없습니다.")
 
-        period_label = st.radio("조회 기간", list(SECTOR_PERIODS), index=len(SECTOR_PERIODS) - 1, horizontal=True,
-                                key="sector_chart_period")
-        period_days = SECTOR_PERIODS[period_label]
-        st.markdown(f"**📈 섹터별 {period_label} 등락**")
-        sector_chart = _sector_history_chart(sector_price_data, leaders, period_days, period_label)
+        # ---- 섹터 차트(흐름) + 상태 표(정확한 수치/판단 정보) ----
+        ctl_period, ctl_mode = st.columns(2)
+        period_label = ctl_period.radio("조회 기간", list(PERIODS), index=len(PERIODS) - 1, horizontal=True,
+                                        key="sector_chart_period")
+        chart_mode = ctl_mode.radio("차트 보기", ["누적 수익률", "SPY 대비 상대강도", "가격 (단일 섹터)"], horizontal=True,
+                                    key="sector_chart_mode")
+        period_days = PERIODS[period_label]
+        spy_close = bench_df["Close"]
+
+        if chart_mode == "가격 (단일 섹터)":
+            default_idx = SECTOR_ETFS.index(leaders[0]) if leaders and leaders[0] in SECTOR_ETFS else 0
+            price_etf = st.selectbox("섹터 선택", SECTOR_ETFS, index=default_idx, key="sector_price_pick",
+                                     format_func=lambda e: sector_label(e, leaders))
+            st.markdown(f"**📈 {sector_label(price_etf, leaders)} 가격 ({period_label})**")
+            sector_chart = price_chart(sector_price_data[price_etf], price_etf, period_days, period_label)
+            chart_caption = (f"종가와 이동평균선(MA20/50/200), {period_label} 고점(점선)입니다. "
+                             "이동평균은 선택 기간 이전 데이터까지 사용해 계산합니다.")
+        elif chart_mode == "SPY 대비 상대강도":
+            st.markdown(f"**📈 섹터별 {period_label} SPY 대비 상대강도**")
+            sector_chart = line_chart(sector_price_data, leaders, period_days, period_label, "relative", spy_close)
+            chart_caption = (f"(섹터 ETF ÷ SPY)를 {period_label} 전 = 100으로 맞춘 선입니다. 100 위로 올라가면 시장보다 강한 섹터, "
+                             "아래로 내려가면 약한 섹터라서 돈이 어디로 이동하는지 보기에 좋습니다. 굵은 선(★)은 주도 섹터입니다.")
+        else:
+            st.markdown(f"**📈 섹터별 {period_label} 등락**")
+            sector_chart = line_chart(sector_price_data, leaders, period_days, period_label, "return")
+            chart_caption = (f"{period_label} 전 종가를 0%로 맞춘 누적 수익률입니다. 굵은 선(★)이 현재 주도 섹터이고, "
+                             "범례의 섹터명을 클릭하면 그 섹터만 강조됩니다.")
+
         if sector_chart is not None:
             st.altair_chart(sector_chart, use_container_width=True)
-            st.caption(f"{period_label} 전 종가를 0%로 맞춘 누적 수익률입니다. 굵은 선(★)이 현재 주도 섹터이고, "
-                       "범례의 섹터명을 클릭하면 그 섹터만 강조됩니다.")
+            st.caption(chart_caption)
 
-            dd_table = _sector_drawdown_table(sector_price_data, leaders, period_days)
-            if not dd_table.empty:
-                st.markdown(f"**📉 고점 대비 하락 현황 ({period_label} 기준)**")
-                st.dataframe(
-                    dd_table.style.format({
-                        "고점": "${:,.2f}", "현재가": "${:,.2f}", "하락 포인트": "{:+,.2f}",
-                        "고점 대비(%)": "{:+.2f}%", "하락 기간(일)": "{:,}일", "하락 기간(거래일)": "{:,}일",
-                    }).background_gradient(subset=["고점 대비(%)"], cmap="Reds_r"),
-                    use_container_width=True,
-                )
-                st.caption(f"고점 = 선택한 {period_label} 동안의 최고 종가입니다. 하락 포인트는 고점 종가 대비 현재가 차이(달러), "
-                           "하락 기간은 고점일부터 가장 최근 거래일까지의 기간이며 낙폭이 큰 섹터가 위에 표시됩니다. "
-                           "고점이 최근 거래일이면 0으로 표시됩니다.")
+            held = _held_sector_info(open_trades) if not open_trades.empty else {}
+            prev_data = {e: d.iloc[:-5] for e, d in sector_price_data.items() if d is not None and len(d) > 30}
+            sector_table = build_sector_table(sector_price_data, leaders, period_days, spy_close, held,
+                                              scored, sector_engine.score_sectors(prev_data))
+            if not sector_table.empty:
+                st.markdown(f"**🧭 섹터 상태 ({period_label} 기준)**")
+                tab_dd, tab_rec, tab_pf = st.tabs(["📉 낙폭", "🔄 회복", "📓 보유·상대성과"])
+                with tab_dd:
+                    _render_sector_table(table_view(sector_table, "낙폭"), gradient="고점 대비(%)")
+                    st.caption(f"고점 = 선택한 {period_label} 동안의 최고 종가. 하락 포인트는 고점 대비 현재가 차이(달러), "
+                               "변동폭 대비(ATR배)는 그 낙폭이 이 섹터의 평소 하루 변동폭(ATR14)의 몇 배인지입니다(섹터마다 변동성이 달라 "
+                               "−5%의 무게가 다르기 때문). 상태: 🟢 −3% 이내 · 🟡 −3~−8% · 🔴 −8% 초과. 낙폭이 큰 섹터가 위에 표시됩니다.")
+                with tab_rec:
+                    _render_sector_table(table_view(sector_table, "회복"))
+                    st.caption("저점 = 고점 이후의 최저 종가. 낙폭 회복률은 저점(0%)에서 고점(100%)까지 얼마나 되돌렸는지입니다. "
+                               "🔻 하락 진행(저점이 최근 3거래일 이내이고 회복률 25% 미만) · 🔄 반등 중 · ↗️ 회복 근접(75% 이상) · "
+                               "🟢 고점 갱신. 덜 회복된 섹터가 위에 표시됩니다.")
+                with tab_pf:
+                    _render_sector_table(table_view(sector_table, "보유·상대성과"))
+                    off_leaders = [f"{e} {v['weight']:.0f}%" for e, v in held.items() if e not in leaders]
+                    st.caption("보유 비중은 진행중 포지션의 매입원가 기준입니다. 전략 순위는 Score_Rank(1주 30% · 1개월 70%) 순위이고, "
+                               "순위 변화는 5거래일 전 대비입니다(▲ 상승). SPY 대비는 선택 기간 수익률 차이(%p)입니다."
+                               + (f" 보유 중이지만 현재 주도 섹터가 아닌 곳: {', '.join(off_leaders)}. "
+                                  "참고 정보이며, 보유 종목은 섹터 순위와 무관하게 자체 손절·익절 규칙으로 관리됩니다." if off_leaders else ""))
         else:
             st.info("섹터 시세를 불러오지 못해 차트를 표시할 수 없습니다.")
 

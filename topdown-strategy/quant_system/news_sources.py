@@ -20,7 +20,7 @@ from email.utils import parsedate_to_datetime
 
 import requests
 
-from qs_config import SECTOR_NAMES_KO
+from qs_config import SECTOR_NAMES_KO, YF_SECTOR_TO_ETF  # noqa: F401  (YF_SECTOR_TO_ETF는 기존 import 호환용)
 
 GOOGLE_NEWS_RSS = "https://news.google.com/rss/search"
 USER_AGENT = "Mozilla/5.0 (compatible; TopDownQuantSystem-news/1.0)"
@@ -156,14 +156,6 @@ SECTOR_QUERY = {
     "XLB": '("materials stocks" OR "mining stocks" OR "chemical stocks")',
     "XLC": '("communication services" OR "media stocks" OR "telecom stocks")',
 }
-# yfinance info["sector"] -> 섹터 ETF (전략 유니버스에 없는 종목의 섹터 판별용)
-YF_SECTOR_TO_ETF = {
-    "Technology": "XLK", "Healthcare": "XLV", "Financial Services": "XLF", "Consumer Cyclical": "XLY",
-    "Consumer Defensive": "XLP", "Industrials": "XLI", "Energy": "XLE", "Utilities": "XLU",
-    "Real Estate": "XLRE", "Basic Materials": "XLB", "Communication Services": "XLC",
-}
-
-
 def collect_sector_news(etf: str, now: datetime, hours: float = 24, limit: int = 10) -> list[Article]:
     """섹터 ETF 코드에 해당하는 업종 전반 기사를 발행 시각 기준 최근 hours시간 이내로 최신순 limit개 수집한다."""
     query = f"{SECTOR_QUERY[etf]} {_US_MARKET} when:1d"

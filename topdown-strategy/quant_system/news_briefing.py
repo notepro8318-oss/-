@@ -29,9 +29,9 @@ import time
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
-from journal import load_trades, sector_of
+from journal import load_trades, resolve_sector
 from news_sources import (
-    Article, collect_news, collect_sector_news, company_name, SECTOR_KO, YF_SECTOR_TO_ETF,
+    Article, collect_news, collect_sector_news, company_name, SECTOR_KO,
 )
 from news_summarize import summarize, DEFAULT_MODEL, SECTOR_SYSTEM_PROMPT
 from job_guard import already_done, mark_done
@@ -90,18 +90,6 @@ def chunk_messages(header: str, sections: list[str], footer: str, limit: int = T
             current += "\n\n" + section
     messages.append(current)
     return messages
-
-
-def resolve_sector(ticker: str) -> str:
-    """전략 유니버스에 있으면 그 섹터ETF, 없으면 yfinance의 sector 분류로 섹터ETF를 추정한다. 못 찾으면 '기타'."""
-    etf = sector_of(ticker)
-    if etf != "기타":
-        return etf
-    try:
-        import yfinance as yf
-        return YF_SECTOR_TO_ETF.get(yf.Ticker(ticker).info.get("sector") or "", "기타")
-    except Exception:
-        return "기타"
 
 
 def top_sectors(open_trades, limit: int = MAX_SECTORS) -> list[tuple[str, float]]:
