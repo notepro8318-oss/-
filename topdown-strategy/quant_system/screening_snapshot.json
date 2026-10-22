@@ -1,51 +1,51 @@
 {
-  "date": "2026-10-21",
+  "date": "2026-10-20",
   "regime": "SIDEWAYS",
   "sideways_mode": "HYBRID",
   "leaders": [
-    "XLV",
-    "XLY"
+    "XLP",
+    "XLB"
   ],
   "candidates": [
     {
-      "ticker": "TMO",
-      "sector": "XLV",
-      "entry_price": 694.02,
-      "stop": 638.19,
-      "weight_pct": 24.3,
-      "shares": 14
+      "ticker": "KO",
+      "sector": "XLP",
+      "entry_price": 93.49,
+      "stop": 89.76,
+      "weight_pct": 33.6,
+      "shares": 143
     },
     {
-      "ticker": "PFE",
-      "sector": "XLV",
-      "entry_price": 29.85,
-      "stop": 28.37,
-      "weight_pct": 21.3,
-      "shares": 284
+      "ticker": "NUE",
+      "sector": "XLB",
+      "entry_price": 261.5,
+      "stop": 243.34,
+      "weight_pct": 23.7,
+      "shares": 36
     },
     {
-      "ticker": "AMGN",
-      "sector": "XLV",
-      "entry_price": 438.34,
-      "stop": 412.12,
-      "weight_pct": 20.6,
-      "shares": 18
-    },
-    {
-      "ticker": "LLY",
-      "sector": "XLV",
-      "entry_price": 1270.75,
-      "stop": 1175.78,
-      "weight_pct": 18.4,
-      "shares": 5
-    },
-    {
-      "ticker": "MRK",
-      "sector": "XLV",
-      "entry_price": 149.88,
-      "stop": 139.81,
-      "weight_pct": 15.5,
+      "ticker": "TGT",
+      "sector": "XLP",
+      "entry_price": 154.0,
+      "stop": 144.62,
+      "weight_pct": 16.1,
       "shares": 41
+    },
+    {
+      "ticker": "MO",
+      "sector": "XLP",
+      "entry_price": 74.64,
+      "stop": 71.02,
+      "weight_pct": 14.1,
+      "shares": 75
+    },
+    {
+      "ticker": "CL",
+      "sector": "XLP",
+      "entry_price": 94.54,
+      "stop": 90.48,
+      "weight_pct": 12.4,
+      "shares": 52
     }
   ]
 }
