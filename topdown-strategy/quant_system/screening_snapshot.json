@@ -1,51 +1,51 @@
 {
-  "date": "2026-10-28",
+  "date": "2026-10-29",
   "regime": "SIDEWAYS",
   "sideways_mode": "HYBRID",
   "leaders": [
-    "XLU",
+    "XLP",
     "XLE"
   ],
   "candidates": [
     {
       "ticker": "COP",
       "sector": "XLE",
-      "entry_price": 149.06,
-      "stop": 140.23,
-      "weight_pct": 26.9,
-      "shares": 72
+      "entry_price": 150.03,
+      "stop": 141.27,
+      "weight_pct": 28.5,
+      "shares": 75
     },
     {
       "ticker": "XOM",
       "sector": "XLE",
-      "entry_price": 182.02,
-      "stop": 172.14,
-      "weight_pct": 21.5,
-      "shares": 47
+      "entry_price": 183.29,
+      "stop": 173.23,
+      "weight_pct": 20.6,
+      "shares": 44
     },
     {
       "ticker": "CVX",
       "sector": "XLE",
-      "entry_price": 229.2,
-      "stop": 217.59,
-      "weight_pct": 18.0,
-      "shares": 31
-    },
-    {
-      "ticker": "MPC",
-      "sector": "XLE",
-      "entry_price": 440.77,
-      "stop": 395.29,
-      "weight_pct": 17.6,
-      "shares": 15
+      "entry_price": 231.46,
+      "stop": 219.68,
+      "weight_pct": 19.0,
+      "shares": 32
     },
     {
       "ticker": "PSX",
       "sector": "XLE",
-      "entry_price": 273.76,
-      "stop": 248.33,
-      "weight_pct": 16.0,
-      "shares": 23
+      "entry_price": 273.61,
+      "stop": 248.2,
+      "weight_pct": 17.0,
+      "shares": 24
+    },
+    {
+      "ticker": "MPC",
+      "sector": "XLE",
+      "entry_price": 432.51,
+      "stop": 385.58,
+      "weight_pct": 14.9,
+      "shares": 13
     }
   ]
 }
