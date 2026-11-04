@@ -1,51 +1,51 @@
 {
-  "date": "2026-11-02",
+  "date": "2026-11-03",
   "regime": "SIDEWAYS",
   "sideways_mode": "HYBRID",
   "leaders": [
-    "XLP",
-    "XLB"
+    "XLV",
+    "XLRE"
   ],
   "candidates": [
     {
-      "ticker": "KO",
-      "sector": "XLP",
-      "entry_price": 95.83,
-      "stop": 91.2,
-      "weight_pct": 25.0,
-      "shares": 104
+      "ticker": "LLY",
+      "sector": "XLV",
+      "entry_price": 1409.38,
+      "stop": 1289.09,
+      "weight_pct": 38.2,
+      "shares": 10
     },
     {
-      "ticker": "MO",
-      "sector": "XLP",
-      "entry_price": 77.17,
-      "stop": 72.62,
-      "weight_pct": 22.7,
-      "shares": 117
+      "ticker": "AMGN",
+      "sector": "XLV",
+      "entry_price": 461.26,
+      "stop": 433.3,
+      "weight_pct": 23.5,
+      "shares": 20
     },
     {
-      "ticker": "PM",
-      "sector": "XLP",
-      "entry_price": 208.29,
-      "stop": 193.57,
-      "weight_pct": 21.7,
-      "shares": 41
+      "ticker": "TMO",
+      "sector": "XLV",
+      "entry_price": 698.34,
+      "stop": 643.49,
+      "weight_pct": 14.2,
+      "shares": 8
     },
     {
-      "ticker": "NUE",
-      "sector": "XLB",
-      "entry_price": 277.65,
-      "stop": 253.91,
-      "weight_pct": 16.8,
-      "shares": 24
+      "ticker": "ABBV",
+      "sector": "XLV",
+      "entry_price": 286.0,
+      "stop": 269.52,
+      "weight_pct": 13.3,
+      "shares": 18
     },
     {
-      "ticker": "TGT",
-      "sector": "XLP",
-      "entry_price": 158.38,
-      "stop": 147.21,
-      "weight_pct": 13.7,
-      "shares": 34
+      "ticker": "PFE",
+      "sector": "XLV",
+      "entry_price": 30.0,
+      "stop": 28.42,
+      "weight_pct": 10.7,
+      "shares": 143
     }
   ]
 }
