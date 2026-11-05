@@ -1,5 +1,5 @@
 {
-  "date": "2026-11-03",
+  "date": "2026-11-04",
   "regime": "SIDEWAYS",
   "sideways_mode": "HYBRID",
   "leaders": [
@@ -8,44 +8,44 @@
   ],
   "candidates": [
     {
-      "ticker": "LLY",
-      "sector": "XLV",
-      "entry_price": 1409.38,
-      "stop": 1289.06,
-      "weight_pct": 38.2,
-      "shares": 10
-    },
-    {
       "ticker": "AMGN",
       "sector": "XLV",
-      "entry_price": 461.26,
-      "stop": 433.29,
-      "weight_pct": 23.5,
-      "shares": 20
+      "entry_price": 478.48,
+      "stop": 449.52,
+      "weight_pct": 35.3,
+      "shares": 29
     },
     {
-      "ticker": "TMO",
+      "ticker": "LLY",
       "sector": "XLV",
-      "entry_price": 698.34,
-      "stop": 643.49,
-      "weight_pct": 14.2,
-      "shares": 8
+      "entry_price": 1417.99,
+      "stop": 1301.74,
+      "weight_pct": 20.7,
+      "shares": 5
     },
     {
       "ticker": "ABBV",
       "sector": "XLV",
-      "entry_price": 286.0,
-      "stop": 269.52,
-      "weight_pct": 13.3,
-      "shares": 18
+      "entry_price": 294.83,
+      "stop": 277.91,
+      "weight_pct": 18.1,
+      "shares": 24
+    },
+    {
+      "ticker": "TMO",
+      "sector": "XLV",
+      "entry_price": 706.16,
+      "stop": 653.51,
+      "weight_pct": 13.6,
+      "shares": 7
     },
     {
       "ticker": "PFE",
       "sector": "XLV",
-      "entry_price": 30.0,
-      "stop": 28.42,
-      "weight_pct": 10.7,
-      "shares": 143
+      "entry_price": 30.79,
+      "stop": 29.17,
+      "weight_pct": 12.4,
+      "shares": 160
     }
   ]
 }
