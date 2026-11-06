@@ -1,51 +1,51 @@
 {
-  "date": "2026-11-04",
+  "date": "2026-11-05",
   "regime": "SIDEWAYS",
   "sideways_mode": "HYBRID",
   "leaders": [
-    "XLV",
+    "XLP",
     "XLRE"
   ],
   "candidates": [
     {
-      "ticker": "AMGN",
-      "sector": "XLV",
-      "entry_price": 478.48,
-      "stop": 449.52,
-      "weight_pct": 35.3,
-      "shares": 29
+      "ticker": "KO",
+      "sector": "XLP",
+      "entry_price": 95.73,
+      "stop": 91.16,
+      "weight_pct": 39.2,
+      "shares": 163
     },
     {
-      "ticker": "LLY",
-      "sector": "XLV",
-      "entry_price": 1417.99,
-      "stop": 1301.74,
-      "weight_pct": 20.7,
-      "shares": 5
+      "ticker": "MO",
+      "sector": "XLP",
+      "entry_price": 77.58,
+      "stop": 72.99,
+      "weight_pct": 21.2,
+      "shares": 109
     },
     {
-      "ticker": "ABBV",
-      "sector": "XLV",
-      "entry_price": 294.83,
-      "stop": 277.91,
-      "weight_pct": 18.1,
-      "shares": 24
+      "ticker": "TGT",
+      "sector": "XLP",
+      "entry_price": 157.95,
+      "stop": 144.9,
+      "weight_pct": 13.7,
+      "shares": 34
     },
     {
-      "ticker": "TMO",
-      "sector": "XLV",
-      "entry_price": 706.16,
-      "stop": 653.51,
-      "weight_pct": 13.6,
-      "shares": 7
+      "ticker": "PSA",
+      "sector": "XLRE",
+      "entry_price": 340.5,
+      "stop": 321.12,
+      "weight_pct": 13.3,
+      "shares": 15
     },
     {
-      "ticker": "PFE",
-      "sector": "XLV",
-      "entry_price": 30.79,
-      "stop": 29.17,
-      "weight_pct": 12.4,
-      "shares": 160
+      "ticker": "CL",
+      "sector": "XLP",
+      "entry_price": 98.69,
+      "stop": 92.43,
+      "weight_pct": 12.6,
+      "shares": 51
     }
   ]
 }
