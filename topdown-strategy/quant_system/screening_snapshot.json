@@ -1,5 +1,5 @@
 {
-  "date": "2026-11-06",
+  "date": "2026-11-09",
   "regime": "SIDEWAYS",
   "sideways_mode": "HYBRID",
   "leaders": [
@@ -8,44 +8,44 @@
   ],
   "candidates": [
     {
-      "ticker": "AMGN",
+      "ticker": "LLY",
       "sector": "XLV",
-      "entry_price": 460.42,
-      "stop": 427.35,
-      "weight_pct": 25.3,
-      "shares": 21
-    },
-    {
-      "ticker": "ABBV",
-      "sector": "XLV",
-      "entry_price": 291.31,
-      "stop": 271.38,
-      "weight_pct": 24.5,
-      "shares": 33
-    },
-    {
-      "ticker": "JNJ",
-      "sector": "XLV",
-      "entry_price": 276.22,
-      "stop": 256.58,
-      "weight_pct": 19.1,
-      "shares": 27
+      "entry_price": 1411.95,
+      "stop": 1280.94,
+      "weight_pct": 26.5,
+      "shares": 7
     },
     {
       "ticker": "TMO",
       "sector": "XLV",
-      "entry_price": 694.76,
-      "stop": 636.06,
-      "weight_pct": 17.4,
-      "shares": 10
+      "entry_price": 721.63,
+      "stop": 659.96,
+      "weight_pct": 22.5,
+      "shares": 12
     },
     {
-      "ticker": "MRK",
+      "ticker": "AMGN",
       "sector": "XLV",
-      "entry_price": 146.73,
-      "stop": 133.55,
-      "weight_pct": 13.7,
-      "shares": 37
+      "entry_price": 465.23,
+      "stop": 432.52,
+      "weight_pct": 18.6,
+      "shares": 15
+    },
+    {
+      "ticker": "JNJ",
+      "sector": "XLV",
+      "entry_price": 282.11,
+      "stop": 262.55,
+      "weight_pct": 16.9,
+      "shares": 23
+    },
+    {
+      "ticker": "ABBV",
+      "sector": "XLV",
+      "entry_price": 293.3,
+      "stop": 273.97,
+      "weight_pct": 15.5,
+      "shares": 21
     }
   ]
 }
