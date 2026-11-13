@@ -116,9 +116,9 @@ risk_manager = RiskManager(risk_pct=V2_RISK_PCT, cap_pct=V2_POSITION_CAP_PCT)
 # 데이터 로딩 (캐시)
 # ------------------------------------------------------------------
 @st.cache_data(ttl=3600, show_spinner=False)
-def load_screening_tracking(hist: pd.DataFrame):
-    """스크리닝 이력 -> (추적 지표 에피소드, 경과일 경로, 엑셀 바이트). 가격 조회가 있어 1시간 캐시."""
-    episodes, paths = screening_history.track(hist)
+def load_screening_tracking(hist: pd.DataFrame, trades: pd.DataFrame, signals: pd.DataFrame):
+    """스크리닝 이력 + 매매일지 시그널 -> (추적 에피소드, 경과일 경로, 엑셀 바이트). 가격 조회가 있어 1시간 캐시."""
+    episodes, paths = screening_history.track(hist, trades=trades, signals=signals)
     return episodes, paths, screening_history.build_excel(hist, episodes, paths)
 
 
@@ -974,15 +974,16 @@ if tab_screening.open:
     try:
         st.header("5️⃣ 스크리닝 이력 & 가격 추적", divider="gray")
         st.caption("스케줄러가 거래일마다 기록한 스크리닝 후보를 날짜별로 누적하고, 편입일 종가 대비 가격 추이를 추적합니다. "
-                   "같은 종목이 연속으로 후보에 오른 구간을 1건(에피소드)으로 보며, 편출·편입 후 60거래일·최신 거래일 중 "
-                   "가장 빠른 시점까지 추적합니다.")
+                   "같은 종목이 연속으로 후보에 오른 구간을 1건(에피소드)으로 보며, 순위 이탈·편입 후 60거래일·최신 거래일 중 "
+                   "가장 빠른 시점까지 추적합니다. '순위 이탈일'은 후보(상위 종목)에서 빠진 날로 매도 시그널과 무관하며, "
+                   "매매일지에서 실제로 매수한 종목은 매도 시그널 발생일을 따로 보여줍니다.")
         hist_df = screening_history.load_history()
         if hist_df.empty:
             st.info("아직 기록된 스크리닝 이력이 없습니다. 다음 스크리닝 스케줄 실행부터 누적됩니다 "
                     "(과거 분은 `python screening_history.py backfill`로 git 이력에서 복원할 수 있습니다).")
         else:
             with st.spinner("편입 종목 가격 추이 계산 중..."):
-                ep_df, path_df, xlsx_bytes = load_screening_tracking(hist_df)
+                ep_df, path_df, xlsx_bytes = load_screening_tracking(hist_df, load_trades(), load_signals())
             ok = ep_df[ep_df["status"] != "가격없음"] if "status" in ep_df.columns else ep_df
             m1, m2, m3, m4, m5 = st.columns(5)
             m1.metric("기록 거래일", f"{hist_df['date'].nunique()}일")
@@ -1007,18 +1008,26 @@ if tab_screening.open:
             if not ok.empty and "ret_close" in ok.columns:
                 with st.expander("📈 종목별 가격 추적", expanded=True):
                     view = ok.sort_values("entry_date", ascending=False)[
-                        ["ticker", "sector", "regime", "entry_date", "exit_date", "status", "tracked_days",
-                         "ret_close", "ret_open", "excess", "mfe", "mae", "stop_hit"]
+                        ["composite_score", "ticker", "sector", "regime", "entry_date", "exit_date", "status",
+                         "tracked_days", "ret_close", "ret_open", "excess", "mfe", "mae", "stop_hit",
+                         "trade_entry_date", "first_signal_date", "first_signal_type",
+                         "exit_signal_date", "exit_signal_type"]
                     ].rename(columns={
-                        "ticker": "종목", "sector": "섹터", "regime": "편입 시 국면", "entry_date": "편입일",
-                        "exit_date": "편출일", "status": "상태", "tracked_days": "추적일",
+                        "composite_score": "편입일 CompositeScore", "ticker": "종목", "sector": "섹터",
+                        "regime": "편입 시 국면", "entry_date": "편입일", "exit_date": "순위 이탈일",
+                        "status": "상태", "tracked_days": "추적일",
                         "ret_close": "수익률(종가)", "ret_open": "수익률(익일시가)", "excess": "SPY 대비",
-                        "mfe": "최대상승", "mae": "최대하락", "stop_hit": "손절 터치"})
+                        "mfe": "최대상승", "mae": "최대하락", "stop_hit": "손절 터치",
+                        "trade_entry_date": "매매일지 매수일", "first_signal_date": "첫 매도 시그널일",
+                        "first_signal_type": "첫 매도 시그널", "exit_signal_date": "전량 청산 시그널일",
+                        "exit_signal_type": "전량 청산 시그널"})
                     pct_cols = ["수익률(종가)", "수익률(익일시가)", "SPY 대비", "최대상승", "최대하락"]
-                    st.dataframe(view.style.format({c: "{:+.1%}" for c in pct_cols}, na_rep="-"),
+                    st.dataframe(view.style.format({**{c: "{:+.1%}" for c in pct_cols},
+                                                    "편입일 CompositeScore": "{:.1f}"}, na_rep="-"),
                                  use_container_width=True, hide_index=True)
                     st.caption("수익률은 편입일(스크리닝 당일) 종가 기준, '익일시가'는 다음 거래일 시가 매수 가정입니다. "
-                               "조정주가를 쓰므로 스냅샷의 진입가와 소수점 단위로 다를 수 있습니다.")
+                               "조정주가를 쓰므로 스냅샷의 진입가와 소수점 단위로 다를 수 있습니다. 매도 시그널은 매수일이 편입일~순위 이탈일 사이인 "
+                               "매매일지 포지션만 연결됩니다. 과거 CompositeScore는 당시 시점 데이터로 재계산한 값입니다.")
     except Exception as e:
         st.error(f"스크리닝 이력 처리 중 오류가 발생했습니다: {e}")
 

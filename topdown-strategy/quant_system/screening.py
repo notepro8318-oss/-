@@ -100,6 +100,7 @@ def compute_screening_snapshot(capital: float = INITIAL_EQUITY,
         candidates.append({
             "ticker": ticker,
             "sector": ticker_sector_map.get(ticker, "-"),
+            "composite_score": round(float(row["composite_score"]), 2),
             "entry_price": round(entry_price, 2),
             "stop": round(stop, 2),
             "weight_pct": round(weight * 100, 1),
