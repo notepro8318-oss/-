@@ -973,10 +973,11 @@ if tab_screening.open:
     # ================================================================
     try:
         st.header("5️⃣ 스크리닝 이력 & 가격 추적", divider="gray")
-        st.caption("스케줄러가 거래일마다 기록한 스크리닝 후보를 날짜별로 누적하고, 편입일 종가 대비 가격 추이를 추적합니다. "
-                   "같은 종목이 연속으로 후보에 오른 구간을 1건(에피소드)으로 보며, 순위 이탈·편입 후 60거래일·최신 거래일 중 "
-                   "가장 빠른 시점까지 추적합니다. '순위 이탈일'은 후보(상위 종목)에서 빠진 날로 매도 시그널과 무관하며, "
-                   "매매일지에서 실제로 매수한 종목은 매도 시그널 발생일을 따로 보여줍니다.")
+        st.caption("스케줄러가 거래일마다 기록한 스크리닝 후보를 날짜별로 누적하고, 편입일 종가에 매수했다고 보고 "
+                   "가격 추이를 추적합니다. 추적은 매매일지와 같은 규칙의 **전량 청산 시그널(초기 손절 · TP1 후 본전 손절 · "
+                   "TP2 후 MA50 이탈 Runner 청산)** 이 날 때까지 이어지며, TP1·TP2(분할 익절)는 도달일만 표시합니다. "
+                   "'순위 이탈일'은 후보(상위 종목)에서 빠진 날로 추적을 끝내지 않습니다. 매매일지에서 실제로 매수한 종목은 "
+                   "실제 매도 시그널 발생일을 옆에 함께 보여줍니다.")
         hist_df = screening_history.load_history()
         if hist_df.empty:
             st.info("아직 기록된 스크리닝 이력이 없습니다. 다음 스크리닝 스케줄 실행부터 누적됩니다 "
@@ -985,13 +986,14 @@ if tab_screening.open:
             with st.spinner("편입 종목 가격 추이 계산 중..."):
                 ep_df, path_df, xlsx_bytes = load_screening_tracking(hist_df, load_trades(), load_signals())
             ok = ep_df[ep_df["status"] != "가격없음"] if "status" in ep_df.columns else ep_df
-            m1, m2, m3, m4, m5 = st.columns(5)
+            m1, m2, m3, m4, m5, m6 = st.columns(6)
             m1.metric("기록 거래일", f"{hist_df['date'].nunique()}일")
-            m2.metric("편입 에피소드", f"{len(ep_df)}건")
-            m3.metric("진행중", f"{int((ok['status'] == '진행중').sum())}건" if not ok.empty else "0건")
+            m2.metric("추적 종목", f"{len(ep_df)}건")
             if not ok.empty and "ret_close" in ok.columns:
-                m4.metric("평균 수익률", f"{ok['ret_close'].mean():+.2%}")
-                m5.metric("승률", f"{(ok['ret_close'] > 0).mean():.0%}")
+                m3.metric("진행중", f"{int((ok['status'] == '진행중').sum())}건")
+                m4.metric("청산 완료", f"{int((ok['status'] != '진행중').sum())}건")
+                m5.metric("평균 전략 수익률", f"{ok['strat_ret'].mean():+.2%}")
+                m6.metric("승률", f"{(ok['strat_ret'] > 0).mean():.0%}")
 
             st.download_button(
                 "📥 엑셀 다운로드 (일자별 이력 · 종목별 추적 · 경과일 수익률 · 요약)",
@@ -1008,26 +1010,33 @@ if tab_screening.open:
             if not ok.empty and "ret_close" in ok.columns:
                 with st.expander("📈 종목별 가격 추적", expanded=True):
                     view = ok.sort_values("entry_date", ascending=False)[
-                        ["composite_score", "ticker", "sector", "regime", "entry_date", "exit_date", "status",
-                         "tracked_days", "ret_close", "ret_open", "excess", "mfe", "mae", "stop_hit",
+                        ["composite_score", "ticker", "sector", "regime", "entry_date", "status", "tracked_days",
+                         "last_date", "tp1_date", "tp2_date", "exit_date", "reentries",
+                         "ret_close", "strat_ret", "excess", "mfe", "mae", "ret_at_rank_exit",
                          "trade_entry_date", "first_signal_date", "first_signal_type",
                          "exit_signal_date", "exit_signal_type"]
                     ].rename(columns={
                         "composite_score": "편입일 CompositeScore", "ticker": "종목", "sector": "섹터",
-                        "regime": "편입 시 국면", "entry_date": "편입일", "exit_date": "순위 이탈일",
-                        "status": "상태", "tracked_days": "추적일",
-                        "ret_close": "수익률(종가)", "ret_open": "수익률(익일시가)", "excess": "SPY 대비",
-                        "mfe": "최대상승", "mae": "최대하락", "stop_hit": "손절 터치",
-                        "trade_entry_date": "매매일지 매수일", "first_signal_date": "첫 매도 시그널일",
-                        "first_signal_type": "첫 매도 시그널", "exit_signal_date": "전량 청산 시그널일",
-                        "exit_signal_type": "전량 청산 시그널"})
-                    pct_cols = ["수익률(종가)", "수익률(익일시가)", "SPY 대비", "최대상승", "최대하락"]
+                        "regime": "편입 시 국면", "entry_date": "편입일", "status": "추적 상태",
+                        "tracked_days": "추적일", "last_date": "추적 종료일(진행중=최신일)",
+                        "tp1_date": "TP1 도달일", "tp2_date": "TP2 도달일", "exit_date": "순위 이탈일",
+                        "reentries": "재편입", "ret_close": "수익률(종가→종료가)", "strat_ret": "전략 수익률",
+                        "excess": "SPY 대비", "mfe": "최대상승", "mae": "최대하락",
+                        "ret_at_rank_exit": "이탈일 시점 수익률",
+                        "trade_entry_date": "매매일지 매수일", "first_signal_date": "실제 첫 매도 시그널일",
+                        "first_signal_type": "실제 첫 매도 시그널", "exit_signal_date": "실제 전량 청산 시그널일",
+                        "exit_signal_type": "실제 전량 청산 시그널"})
+                    pct_cols = ["수익률(종가→종료가)", "전략 수익률", "SPY 대비", "최대상승", "최대하락",
+                                "이탈일 시점 수익률"]
                     st.dataframe(view.style.format({**{c: "{:+.1%}" for c in pct_cols},
                                                     "편입일 CompositeScore": "{:.1f}"}, na_rep="-"),
                                  use_container_width=True, hide_index=True)
-                    st.caption("수익률은 편입일(스크리닝 당일) 종가 기준, '익일시가'는 다음 거래일 시가 매수 가정입니다. "
-                               "조정주가를 쓰므로 스냅샷의 진입가와 소수점 단위로 다를 수 있습니다. 매도 시그널은 매수일이 편입일~순위 이탈일 사이인 "
-                               "매매일지 포지션만 연결됩니다. 과거 CompositeScore는 당시 시점 데이터로 재계산한 값입니다.")
+                    st.caption("수익률은 편입일(스크리닝 당일) 종가 → 종료가(청산 시그널가, 진행중이면 최신 종가) 기준이고, "
+                               "전략 수익률은 TP1·TP2 분할 매도를 30/30/40 비중으로 가중한 값입니다. 손절은 갭을 반영해 "
+                               "min(손절가, 당일 시가)로 계산합니다. 추적 중인 종목이 후보에서 빠졌다가 다시 오르면 "
+                               "'재편입'으로만 셉니다. 실제 매도 시그널은 매수일이 편입일~추적 종료일 사이인 매매일지 포지션만 "
+                               "연결되며 실제 매수가·매수일이 달라 시뮬레이션과 날짜가 다를 수 있습니다. "
+                               "과거 CompositeScore는 당시 시점 데이터로 재계산한 값입니다.")
     except Exception as e:
         st.error(f"스크리닝 이력 처리 중 오류가 발생했습니다: {e}")
 
