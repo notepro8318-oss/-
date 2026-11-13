@@ -38,7 +38,7 @@ import streamlit as st
 # 새로 추가된 이름을 import하다 ImportError가 난다. 소스 파일이 바뀌었으면
 # 의존 순서대로 로컬 모듈을 다시 불러온다.
 _LOCAL_MODULES = ["qs_config", "data", "regime", "qs_sector", "screener", "execution",
-                  "sector_view", "risk", "github_store", "journal", "backtest_v2", "screening"]
+                  "sector_view", "risk", "github_store", "journal", "backtest_v2", "screening", "screening_history"]
 _src_sig = tuple(sorted((p.name, p.stat().st_mtime_ns) for p in Path(__file__).parent.glob("*.py")))
 if getattr(sys, "_qs_src_sig", None) != _src_sig:
     for _name in _LOCAL_MODULES:
@@ -69,6 +69,7 @@ from journal import (
     PHASE_LABELS, SIGNAL_LABELS, EXIT_SIGNAL_TYPES, summarize_closed_trade, sector_of, resolve_sector,
 )
 import github_store
+import screening_history
 
 st.set_page_config(page_title="TopDown Quant System", page_icon="📊", layout="wide")
 
@@ -114,6 +115,13 @@ risk_manager = RiskManager(risk_pct=V2_RISK_PCT, cap_pct=V2_POSITION_CAP_PCT)
 # ------------------------------------------------------------------
 # 데이터 로딩 (캐시)
 # ------------------------------------------------------------------
+@st.cache_data(ttl=3600, show_spinner=False)
+def load_screening_tracking(hist: pd.DataFrame):
+    """스크리닝 이력 -> (추적 지표 에피소드, 경과일 경로, 엑셀 바이트). 가격 조회가 있어 1시간 캐시."""
+    episodes, paths = screening_history.track(hist)
+    return episodes, paths, screening_history.build_excel(hist, episodes, paths)
+
+
 @st.cache_data(ttl=CACHE_TTL, show_spinner=False)
 def load_benchmark():
     return fetch_ohlcv(BENCHMARK, period="3y")
@@ -959,6 +967,60 @@ if tab_screening.open:
     except Exception as e:
         st.error(f"데이터 조회 중 오류가 발생했습니다: {e}\n\n"
                  "yfinance가 일시적으로 요청을 제한했을 수 있습니다. 잠시 후 새로고침 해보세요.")
+
+    # ================================================================
+    # 5단계: 스크리닝 이력 & 가격 추이 추적 (엑셀 다운로드)
+    # ================================================================
+    try:
+        st.header("5️⃣ 스크리닝 이력 & 가격 추적", divider="gray")
+        st.caption("스케줄러가 거래일마다 기록한 스크리닝 후보를 날짜별로 누적하고, 편입일 종가 대비 가격 추이를 추적합니다. "
+                   "같은 종목이 연속으로 후보에 오른 구간을 1건(에피소드)으로 보며, 편출·편입 후 60거래일·최신 거래일 중 "
+                   "가장 빠른 시점까지 추적합니다.")
+        hist_df = screening_history.load_history()
+        if hist_df.empty:
+            st.info("아직 기록된 스크리닝 이력이 없습니다. 다음 스크리닝 스케줄 실행부터 누적됩니다 "
+                    "(과거 분은 `python screening_history.py backfill`로 git 이력에서 복원할 수 있습니다).")
+        else:
+            with st.spinner("편입 종목 가격 추이 계산 중..."):
+                ep_df, path_df, xlsx_bytes = load_screening_tracking(hist_df)
+            ok = ep_df[ep_df["status"] != "가격없음"] if "status" in ep_df.columns else ep_df
+            m1, m2, m3, m4, m5 = st.columns(5)
+            m1.metric("기록 거래일", f"{hist_df['date'].nunique()}일")
+            m2.metric("편입 에피소드", f"{len(ep_df)}건")
+            m3.metric("진행중", f"{int((ok['status'] == '진행중').sum())}건" if not ok.empty else "0건")
+            if not ok.empty and "ret_close" in ok.columns:
+                m4.metric("평균 수익률", f"{ok['ret_close'].mean():+.2%}")
+                m5.metric("승률", f"{(ok['ret_close'] > 0).mean():.0%}")
+
+            st.download_button(
+                "📥 엑셀 다운로드 (일자별 이력 · 종목별 추적 · 경과일 수익률 · 요약)",
+                data=xlsx_bytes,
+                file_name=f"screening_tracking_{datetime.now():%Y%m%d}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                type="primary", use_container_width=True,
+            )
+
+            with st.expander("📅 일자별 스크리닝 이력", expanded=False):
+                st.dataframe(screening_history.daily_summary(hist_df).sort_values("날짜", ascending=False),
+                             use_container_width=True, hide_index=True)
+
+            if not ok.empty and "ret_close" in ok.columns:
+                with st.expander("📈 종목별 가격 추적", expanded=True):
+                    view = ok.sort_values("entry_date", ascending=False)[
+                        ["ticker", "sector", "regime", "entry_date", "exit_date", "status", "tracked_days",
+                         "ret_close", "ret_open", "excess", "mfe", "mae", "stop_hit"]
+                    ].rename(columns={
+                        "ticker": "종목", "sector": "섹터", "regime": "편입 시 국면", "entry_date": "편입일",
+                        "exit_date": "편출일", "status": "상태", "tracked_days": "추적일",
+                        "ret_close": "수익률(종가)", "ret_open": "수익률(익일시가)", "excess": "SPY 대비",
+                        "mfe": "최대상승", "mae": "최대하락", "stop_hit": "손절 터치"})
+                    pct_cols = ["수익률(종가)", "수익률(익일시가)", "SPY 대비", "최대상승", "최대하락"]
+                    st.dataframe(view.style.format({c: "{:+.1%}" for c in pct_cols}, na_rep="-"),
+                                 use_container_width=True, hide_index=True)
+                    st.caption("수익률은 편입일(스크리닝 당일) 종가 기준, '익일시가'는 다음 거래일 시가 매수 가정입니다. "
+                               "조정주가를 쓰므로 스냅샷의 진입가와 소수점 단위로 다를 수 있습니다.")
+    except Exception as e:
+        st.error(f"스크리닝 이력 처리 중 오류가 발생했습니다: {e}")
 
 # ================================================================
 # 백테스트 (버튼 클릭 시 실행 - 무거운 작업이라 기본 비활성)

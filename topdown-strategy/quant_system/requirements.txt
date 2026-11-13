@@ -4,3 +4,4 @@ numpy>=1.26
 matplotlib>=3.7
 streamlit>=1.38
 requests>=2.31
+xlsxwriter>=3.1

@@ -21,6 +21,7 @@ import requests
 from qs_config import INITIAL_EQUITY, DEFAULT_SIDEWAYS_MODE, SIDEWAYS_MODES
 from job_guard import already_done, mark_done, latest_completed_us_session
 from screening import compute_screening_snapshot, load_snapshot, save_snapshot, diff_snapshots
+from screening_history import append_snapshot
 
 JOB = "screening"
 
@@ -94,6 +95,9 @@ def main() -> None:
         sys.exit(1)
 
     save_snapshot(new_snapshot)
+    # 날짜별 누적 이력(엑셀 추적용). 같은 날짜는 교체되므로 재시도해도 중복되지 않는다.
+    # 실패하면 mark_done 전에 예외로 끝나 다음 슬롯이 다시 시도한다(이때 변경 사항은 이미 저장돼 알림은 중복되지 않음).
+    append_snapshot(new_snapshot)
     if not manual:
         mark_done(JOB, str(session))
 
