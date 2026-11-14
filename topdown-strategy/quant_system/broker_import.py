@@ -30,6 +30,13 @@ DIV_KIND, DIV_TAX_KIND = "배당금외화입금", "배당세금출금"
 DIV_COLUMNS = ["id", "import_key", "date", "name", "ticker", "kind", "gross", "tax", "net"]
 DIV_REPO_PATH = "topdown-strategy/quant_system/trade_dividends.csv"
 DIV_LOCAL_PATH = os.path.join(jn._LOCAL_DIR, "trade_dividends.csv")
+LEDGER_COLUMNS = ["key", "date", "no", "kind", "ticker", "side", "qty", "balance", "usd_cash", "krw_cash",
+                  "flow_krw", "fx_hint"]
+LEDGER_REPO_PATH = "topdown-strategy/quant_system/account_ledger.csv"
+LEDGER_LOCAL_PATH = os.path.join(jn._LOCAL_DIR, "account_ledger.csv")
+# 이 종류의 행은 '외화예수금'(USD 현금)을, 아래 행은 '예수금'(KRW 현금)을 체결 후 잔고로 보고한다
+USD_CASH_KINDS = {"해외주식매수출금", "해외주식매도입금", DIV_KIND, "외화예탁금이용료입금", "외화매도외화출금"}
+KRW_CASH_KINDS = {"예탁금이용료입금", "외화예탁금세금출금", "외화매도원화입금", DIV_TAX_KIND, "이체입금", "이체송금"}
 ETF_COLUMNS = ["import_key", "date", "ticker", "name", "side", "qty", "price", "fee", "balance"]
 ETF_REPO_PATH = "topdown-strategy/quant_system/etf_trades.csv"
 ETF_LOCAL_PATH = os.path.join(jn._LOCAL_DIR, "etf_trades.csv")
@@ -109,8 +116,41 @@ def parse_statement(source) -> tuple[pd.DataFrame, dict]:
                 + pd.to_numeric(t.get("제세금합"), errors="coerce").fillna(0)).round(4),
     }).sort_values(["date", "no"]).reset_index(drop=True)
     info = {"rows_total": n_all, "rows_trade": len(out), "dividends": _parse_dividends(raw),
+            "ledger": _parse_ledger(raw),
             "start": raw["_day"].min().date() if n_all else None, "end": raw["_day"].max().date() if n_all else None}
     return out, info
+
+
+def _parse_ledger(raw: pd.DataFrame) -> pd.DataFrame:
+    """계좌 잔고 복원용 숫자 내역: 체결 후 보유수량, USD/KRW 현금 잔고, 외부 입출금(KRW). 이름·계좌 정보는 담지 않는다."""
+    keep = {BUY_KIND, SELL_KIND} | USD_CASH_KINDS | KRW_CASH_KINDS
+    d = raw[raw["거래종류"].isin(keep)].dropna(subset=["_day"]).copy()
+    rows = []
+    for _, r in d.iterrows():
+        kind, day = r["거래종류"], r["_day"]
+        row = {"key": f"{day:%Y-%m-%d}#{int(r['거래번호'])}", "date": day.date(), "no": int(r["거래번호"]), "kind": kind,
+               "ticker": "", "side": "", "qty": float("nan"), "balance": float("nan"), "usd_cash": float("nan"),
+               "krw_cash": float("nan"), "flow_krw": float("nan"), "fx_hint": float("nan")}
+        if kind in (BUY_KIND, SELL_KIND):
+            row["name"] = norm_name(r["종목명"])
+            row["side"] = "BUY" if kind == BUY_KIND else "SELL"
+            row["qty"] = _num(r["수량"]) * (1 if kind == BUY_KIND else -1)
+            row["balance"] = _num(r["외화유가증권"])
+        if kind in USD_CASH_KINDS:
+            row["usd_cash"] = _num(r["외화예수금"])
+        if kind in KRW_CASH_KINDS:
+            row["krw_cash"] = _num(r["예수금"])
+        if kind in ("이체입금", "이체송금"):
+            amt = _num(r["입출금액"])
+            row["flow_krw"] = amt if kind == "이체입금" else -amt
+            same = d[(d["_day"] == day) & (d["거래종류"].isin(["외화매도원화입금", "외화매도외화출금"]))]
+            krw = sum(_num(v) for v in same[same["거래종류"] == "외화매도원화입금"]["외화입출금액"])
+            usd = sum(_num(v) for v in same[same["거래종류"] == "외화매도외화출금"]["외화거래금액"])
+            if krw > 0 and usd > 0:
+                row["fx_hint"] = krw / usd
+        rows.append(row)
+    cols = LEDGER_COLUMNS + ["name"]
+    return pd.DataFrame(rows, columns=cols) if rows else pd.DataFrame(columns=cols)
 
 
 def _num(v) -> float:
@@ -208,14 +248,16 @@ def _validate_balances(rows: pd.DataFrame) -> list:
 
 def build_plan(parsed: pd.DataFrame, trades_df: pd.DataFrame, exits_df: pd.DataFrame, signals_df: pd.DataFrame,
                name_map: dict, get_df, dividends: pd.DataFrame | None = None,
-               dividends_have: set | None = None, etf_have: set | None = None) -> dict:
+               dividends_have: set | None = None, etf_have: set | None = None,
+               ledger: pd.DataFrame | None = None, ledger_have: set | None = None) -> dict:
     """미리보기용 계획. get_df(ticker) → 일봉 DataFrame(실패 시 빈 DataFrame). 아무것도 쓰지 않는다.
     dividends: parse_statement가 준 info['dividends']. *_have는 이미 저장된 거래 키(테스트용으로 주입 가능)."""
     info_dividends = dividends
     parsed_all = parsed
     plan = {"lots": [], "unmapped": [], "excluded_etf": {}, "dropped_sells": [], "fractional": [],
             "balance_warnings": [], "kept_manual": [], "period": (None, None),
-            "fee_updates": {"trades": [], "exits": []}, "dividends_new": pd.DataFrame(), "etf_new": pd.DataFrame()}
+            "fee_updates": {"trades": [], "exits": []}, "dividends_new": pd.DataFrame(), "etf_new": pd.DataFrame(),
+            "ledger_new": pd.DataFrame()}
     if parsed.empty:
         return plan
     plan["period"] = (parsed["date"].min(), parsed["date"].max())
@@ -315,6 +357,12 @@ def build_plan(parsed: pd.DataFrame, trades_df: pd.DataFrame, exits_df: pd.DataF
         etf = etf[~etf["key"].isin(have)]
         etf["ticker"] = etf["name"].map(lambda n: name_map[n]["ticker"])
         plan["etf_new"] = etf
+    # 계좌 잔고 내역(자산 곡선용): 새 키만. 종목명 → 티커
+    if ledger is not None and not ledger.empty:
+        have = set(load_ledger()["key"]) if ledger_have is None else ledger_have
+        lg = ledger[~ledger["key"].isin(have)].copy()
+        lg["ticker"] = lg["name"].map(lambda n: name_map.get(n, {}).get("ticker", "") if isinstance(n, str) else "")
+        plan["ledger_new"] = lg[LEDGER_COLUMNS]
     plan["summary"] = {
         "new_lots": sum(1 for l in plan["lots"] if l["mode"] == "new"),
         "replaced": sum(1 for l in plan["lots"] if l["mode"] in ("update", "replace")),
@@ -322,10 +370,12 @@ def build_plan(parsed: pd.DataFrame, trades_df: pd.DataFrame, exits_df: pd.DataF
         "new_sells": sum(len(l["new_sells"]) for l in plan["lots"]),
         "to_apply": sum(1 for l in plan["lots"] if l["mode"] != "exists" or l["new_sells"]),
         "dividends": len(plan["dividends_new"]), "etf_rows": len(plan["etf_new"]),
+        "ledger_rows": len(plan["ledger_new"]),
         "fee_updates": len(plan["fee_updates"]["trades"]) + len(plan["fee_updates"]["exits"]),
     }
     plan["summary"]["to_apply_total"] = (plan["summary"]["to_apply"] + plan["summary"]["dividends"]
-                                         + plan["summary"]["etf_rows"] + plan["summary"]["fee_updates"])
+                                         + plan["summary"]["etf_rows"] + plan["summary"]["fee_updates"]
+                                         + plan["summary"]["ledger_rows"])
     return plan
 
 
@@ -339,6 +389,17 @@ def load_dividends() -> pd.DataFrame:
         for c in ("gross", "tax", "net"):
             df[c] = pd.to_numeric(df[c]).fillna(0.0)
         for c in ("import_key", "ticker", "kind", "name"):
+            df[c] = df[c].astype(object).where(df[c].notna(), "")
+    return df
+
+
+def load_ledger() -> pd.DataFrame:
+    df = jn._read_df(LEDGER_REPO_PATH, LEDGER_LOCAL_PATH, LEDGER_COLUMNS)
+    if not df.empty:
+        df["date"] = pd.to_datetime(df["date"]).dt.date
+        for c in ("no", "qty", "balance", "usd_cash", "krw_cash", "flow_krw", "fx_hint"):
+            df[c] = pd.to_numeric(df[c])
+        for c in ("key", "kind", "ticker", "side"):
             df[c] = df[c].astype(object).where(df[c].notna(), "")
     return df
 
@@ -531,6 +592,13 @@ def apply_plan(plan: dict, extra_map: dict | None = None) -> dict:
         jn._write_df(add if cur.empty else pd.concat([cur, add], ignore_index=True), ETF_REPO_PATH, ETF_LOCAL_PATH,
                      "Import broker statement: ETF trades")
     res["etf_added"] = len(ne)
+    nl = plan["ledger_new"]
+    if len(nl):
+        cur = load_ledger()
+        add = nl.reset_index(drop=True)
+        jn._write_df(add if cur.empty else pd.concat([cur, add], ignore_index=True), LEDGER_REPO_PATH, LEDGER_LOCAL_PATH,
+                     "Import broker statement: account ledger")
+    res["ledger_added"] = len(nl)
 
     # 새로 만든 열린 포지션은 진입일부터 지금까지의 시그널을 한 번에 감지한다. 이미 지나간 시그널이라
     # 텔레그램 알림은 보내지 않도록 notified 처리한다.

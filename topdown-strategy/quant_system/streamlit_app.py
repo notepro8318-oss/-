@@ -71,6 +71,9 @@ from journal import (
 import github_store
 import screening_history
 import journal_review as jr
+import journal_analytics as ja
+import journal_charts as jc
+from qs_config import TP1_PCT as _TP1_PCT, TP2_PCT as _TP2_PCT
 import broker_import
 
 st.set_page_config(page_title="TopDown Quant System", page_icon="📊", layout="wide")
@@ -562,20 +565,22 @@ def _render_broker_import(trades_df) -> None:
 
         with st.spinner("시세로 체결일·손절가를 계산하는 중..."):
             plan = broker_import.build_plan(parsed, load_trades(), load_exits(), load_signals(), name_map, _import_prices,
-                                            dividends=info["dividends"])
+                                            dividends=info["dividends"], ledger=info["ledger"])
         sm = plan["summary"] if "summary" in plan else {"new_lots": 0, "replaced": 0, "existing": 0, "new_sells": 0,
                                                           "to_apply": 0, "dividends": 0, "etf_rows": 0, "fee_updates": 0,
-                                                          "to_apply_total": 0}
+                                                          "ledger_rows": 0, "to_apply_total": 0}
         st.caption(f"파일 기간 {info['start']} ~ {info['end']} · 전체 {info['rows_total']}행 중 매수·매도 {info['rows_trade']}행")
         k = st.columns(4)
         k[0].metric("새 포지션", f"{sm['new_lots']}건")
         k[1].metric("수동 기록 교체", f"{sm['replaced']}건")
         k[2].metric("추가될 매도", f"{sm['new_sells']}건")
         k[3].metric("이미 반영됨", f"{sm['existing']}건")
-        k2 = st.columns(3)
+        k2 = st.columns(4)
         k2[0].metric("새 배당금", f"{sm['dividends']}건")
         k2[1].metric("ETF 거래(보유 현황용)", f"{sm['etf_rows']}건")
-        k2[2].metric("수수료 보강", f"{sm['fee_updates']}건",
+        k2[2].metric("계좌 잔고 내역", f"{sm['ledger_rows']}건",
+                     help="계좌 평가금액·SPY 비교용 숫자(보유수량, 현금 잔고, 입출금 금액)만 저장합니다. 이름·계좌번호는 저장하지 않습니다.")
+        k2[3].metric("수수료 보강", f"{sm['fee_updates']}건",
                      help="수수료 항목이 생기기 전에 가져온 포지션·매도 기록에 파일의 수수료·세금을 채웁니다.")
 
         rows = []
@@ -619,7 +624,8 @@ def _render_broker_import(trades_df) -> None:
             else:
                 _flash("flash_journal", "success",
                        f"가져오기 완료 — 새 포지션 {res['created']}건, 수동 기록 교체 {res['replaced']}건, 매도 {res['exits_added']}건, "
-                       f"배당 {res['dividends_added']}건, ETF 거래 {res['etf_added']}건 추가, 수수료 보강 {res['fee_updates']}건.")
+                       f"배당 {res['dividends_added']}건, ETF 거래 {res['etf_added']}건, 계좌 잔고 {res['ledger_added']}건 추가, "
+                       f"수수료 보강 {res['fee_updates']}건.")
             st.rerun()
 
 
@@ -629,14 +635,16 @@ def _last_close(ticker: str) -> float:
     return float(df["Close"].iloc[-1]) if not df.empty else float("nan")
 
 
-def _render_dividends_and_etf() -> None:
+def _render_dividends_and_etf(wrap: bool = True) -> None:
     """가져온 배당금 집계와 장기 보유 ETF 현황(시그널 없음)."""
     div_df = broker_import.load_dividends()
     etf_df = broker_import.load_etf_trades()
     if div_df.empty and etf_df.empty:
+        st.info("엑셀 거래내역을 가져오면 장기 보유 ETF 현황과 배당금이 여기에 표시됩니다.")
         return
     held = broker_import.etf_holdings(etf_df)
-    with st.expander(f"🏦 장기 보유 ETF · 💵 배당금 (보유 ETF {len(held)}종 · 배당 {len(div_df)}건)"):
+    with (st.expander(f"🏦 장기 보유 ETF · 💵 배당금 (보유 ETF {len(held)}종 · 배당 {len(div_df)}건)") if wrap
+          else st.container()):
         if not held.empty:
             st.markdown("**🏦 장기 보유 ETF** — 손절·익절 시그널과 알림 없이 보유 현황만 표시합니다.")
             dsum_t = jr.dividend_summary(div_df)["by_ticker"].set_index("종목")["세후"] if not div_df.empty else pd.Series(dtype=float)
@@ -662,6 +670,184 @@ def _render_dividends_and_etf() -> None:
             c2.dataframe(ds["by_ticker"].style.format({"세전": "{:.2f}", "세금": "{:.2f}", "세후": "{:.2f}"}),
                          hide_index=True, use_container_width=True)
             st.caption("세금 = 외화 원천징수 + 원화로 낸 배당세금(그날 환율로 환산). 포지션 손익에는 합산하지 않습니다.")
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _account_curves(ledger: pd.DataFrame):
+    """계좌 평가금액 복원 + SPY(배당 재투자 조정) 시세. 시세 다운로드가 많아 1시간 캐시."""
+    from concurrent.futures import ThreadPoolExecutor
+    start = pd.Timestamp(ledger["date"].min())
+    tickers = sorted({t for t in ledger["ticker"].unique() if t})
+    with ThreadPoolExecutor(max_workers=8) as ex_:
+        closes = dict(zip(tickers, ex_.map(lambda t: ja.fetch_close(t, start, adjusted=False), tickers)))
+        fx_f = ex_.submit(ja.fetch_close, "KRW=X", start)
+        spy_f = ex_.submit(ja.fetch_close, "SPY", start, True)
+    eq, pos = ja.build_equity(ledger, lambda t: closes.get(t), lambda: fx_f.result())
+    return eq, pos, spy_f.result()
+
+
+def _open_last_closes(open_df: pd.DataFrame) -> dict:
+    out = {}
+    for _, t in open_df.iterrows():
+        m = load_dashboard_metrics(t["ticker"], float(t["entry_price"]), float(t["initial_stop"]),
+                                   float(t["current_stop"]), t["phase"])
+        if "error" not in m:
+            out[t["id"]] = m["last_close"]
+    return out
+
+
+def _plot(fig) -> None:
+    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+
+
+def _period_picker(trades_df, signals_df):
+    """대시보드·종료 탭이 함께 쓰는 기간 필터. (시작일, 종료일, 선택값) 반환."""
+    today = datetime.now().date()
+    s_start = ja.strategy_start(trades_df, signals_df)
+    options = [ja.PERIOD_ALL, ja.PERIOD_YTD, ja.PERIOD_3M] + ([ja.PERIOD_STRATEGY] if s_start else [])
+    pick = st.radio("기간", options, horizontal=True, key="journal_period", label_visibility="collapsed")
+    start, end = ja.period_range(pick, today, s_start, None)
+    if pick == ja.PERIOD_STRATEGY:
+        st.caption(f"전략 시작 이후 = 첫 시그널이 발생한 {s_start}부터. 1~6월 거래는 전략 시그널 이전이라 따로 보려면 '전체'를 고르세요.")
+    return start, end, pick
+
+
+def _filter_results_by_exit(res: pd.DataFrame, start, end) -> pd.DataFrame:
+    if res.empty or (start is None and end is None):
+        return res
+    keep = [(pd.notna(d) and ja.in_range(d, start, end)) for d in res["exit_date"]]
+    return res[keep].reset_index(drop=True)
+
+
+def _render_dashboard(trades_df, exits_df, signals_df, open_trades, closed_res_all, p_start, p_end) -> None:
+    """투자 분석 대시보드: 계좌 vs SPY, 실현손익, 월별 구성, R배수 분포, 종목 기여, 달력, 자산 구성."""
+    ledger = broker_import.load_ledger()
+    div_df = broker_import.load_dividends()
+    ex = ja.exit_pnl_frame(trades_df, exits_df)
+    res_p = _filter_results_by_exit(closed_res_all, p_start, p_end)
+    cum = ja.cumulative_realized(ex, p_start, p_end)
+    realized = float(cum["cum"].iloc[-1]) if len(cum) else 0.0
+    div_p = div_df[[ja.in_range(d, p_start, p_end) for d in div_df["date"]]] if not div_df.empty else div_df
+    div_net = float(div_p["net"].sum()) if not div_p.empty else 0.0
+
+    # ---- 계좌 vs SPY
+    eq = pos = None
+    if ledger.empty:
+        st.info("계좌 평가금액·SPY 비교는 증권사 거래내역 엑셀을 (다시) 올리면 표시됩니다. "
+                "위 '📤 증권사 거래내역 가져오기'에서 같은 파일을 올려 주세요.")
+    else:
+        with st.spinner("계좌 평가금액과 시세를 불러오는 중..."):
+            eq, pos, spy = _account_curves(ledger)
+        if eq.empty:
+            st.warning("계좌 평가금액을 계산하지 못했습니다.")
+            eq = None
+        else:
+            tw = ja.twr_series(eq, p_start)
+            bm = ja.same_cash_benchmark(eq, spy, p_start)
+            e_p = eq[eq.index >= pd.Timestamp(p_start)] if p_start else eq
+            my_ret, spy_ret = float(tw.iloc[-1]), float(bm["ret"].iloc[-1]) if len(bm) else float("nan")
+            k = st.columns(6)
+            k[0].metric("계좌 평가금액", f"${eq['equity'].iloc[-1]:,.0f}",
+                        help="USD 현금 + 보유 종목(개별주·ETF) 평가. 거래내역의 마지막 거래 이후 거래는 반영되지 않습니다.")
+            k[1].metric("기간 수익률", f"{my_ret:+.2%}", help="입출금을 보정한 시간가중수익률(TWR). 배당 포함, 수수료 반영.")
+            k[2].metric("SPY 수익률", f"{spy_ret:+.2%}", f"초과 {(my_ret - spy_ret) * 100:+.1f}%p", help="배당 재투자 기준.")
+            k[3].metric("최대 낙폭", f"{ja.max_drawdown(1 + tw):.1%}", help="기간 중 고점 대비 최대 하락(수익률 기준).")
+            k[4].metric("실현손익", f"${realized:+,.0f}", help="수수료 반영, 기간 내 매도 기준.")
+            k[5].metric("배당(세후)", f"${div_net:,.0f}")
+            mode = st.radio("계좌 곡선", ["수익률", "금액"], horizontal=True, key="dash_mode", label_visibility="collapsed")
+            st.markdown("**📈 내 계좌 vs SPY (같은 자금을 SPY에 넣었다면)**")
+            _plot(jc.fig_equity(e_p, bm, tw, mode))
+            st.caption("수익률은 입출금(4/14 출금 등)을 보정한 시간가중수익률이고 SPY는 같은 기간 배당 재투자 수익률입니다. "
+                       "'금액'은 같은 시점에 같은 금액을 SPY에 넣었을 때의 평가금액입니다. 한국 날짜와 미국 종가가 하루 어긋날 수 있습니다.")
+
+    # ---- 실현손익 곡선 / 월별 구성
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown("**💰 누적 실현손익 · 낙폭**")
+        if len(cum):
+            _plot(jc.fig_cum_realized(cum))
+        else:
+            st.caption("이 기간에 매도 기록이 없습니다.")
+    with c2:
+        st.markdown("**🗓 월별 손익 구성**")
+        mc = ja.monthly_components(ex, div_df, p_start, p_end)
+        if len(mc):
+            _plot(jc.fig_monthly(mc))
+        else:
+            st.caption("이 기간에 데이터가 없습니다.")
+
+    # ---- 거래 분포
+    c3, c4 = st.columns(2)
+    with c3:
+        st.markdown("**🎯 R배수 분포** — 손실은 −1R 근처, 수익은 오른쪽으로 길수록 건강")
+        if res_p["r_multiple"].notna().any():
+            _plot(jc.fig_r_hist(res_p))
+        else:
+            st.caption("종료된 거래가 없습니다.")
+    with c4:
+        st.markdown("**⏱ 보유일 vs 손익률** (점 크기 = 손익 금액)")
+        if res_p["return_pct"].notna().any():
+            _plot(jc.fig_scatter(res_p))
+        else:
+            st.caption("종료된 거래가 없습니다.")
+
+    # ---- 종목 기여 / 달력
+    c5, c6 = st.columns(2)
+    with c5:
+        st.markdown("**🏷 종목별 기여 손익**")
+        ct = ja.contribution_by_ticker(ex, p_start, p_end)
+        if len(ct):
+            _plot(jc.fig_contrib(ct))
+        else:
+            st.caption("이 기간에 매도 기록이 없습니다.")
+    with c6:
+        st.markdown("**📅 일별 실현손익 달력**")
+        cal = ja.calendar_frame(ex, p_start, p_end)
+        if len(cal):
+            _plot(jc.fig_calendar(cal))
+        else:
+            st.caption("이 기간에 매도 기록이 없습니다.")
+
+    # ---- 자산 구성
+    c7, c8 = st.columns(2)
+    with c7:
+        if eq is not None and pos is not None:
+            kinds = {v["ticker"]: v["kind"] for v in broker_import.load_name_map().values()}
+            last = pos.iloc[-1]
+            stock = float(sum(v for t, v in last.items() if kinds.get(t) == "STOCK"))
+            etf = float(sum(v for t, v in last.items() if kinds.get(t) == "ETF"))
+            cash = float(eq["cash_usd"].iloc[-1] + eq["cash_krw_usd"].iloc[-1])
+            _plot(jc.fig_donut(["개별주", "ETF", "현금"], [stock, etf, cash], "자산군 구성",
+                               ["#7048E8", "#12B886", "#CED4DA"]))
+    with c8:
+        if not open_trades.empty:
+            lc = _open_last_closes(open_trades)
+            sec: dict = {}
+            for _, t in open_trades.iterrows():
+                v = lc.get(t["id"], float(t["entry_price"])) * int(t["remaining_shares"])
+                sec[sector_of(t["ticker"])] = sec.get(sector_of(t["ticker"]), 0.0) + v
+            _plot(jc.fig_donut(list(sec.keys()), list(sec.values()), "진행중 개별주 섹터 구성"))
+
+
+def _render_position_overview(open_trades, equity_value=None) -> None:
+    """진행중 탭 상단: 손절·목표 위치 게이지와 총 오픈 리스크."""
+    lc = _open_last_closes(open_trades)
+    risk = ja.open_risk(open_trades, lc)
+    if equity_value is None:
+        _lg = broker_import.load_ledger()
+        if not _lg.empty:
+            _eq = _account_curves(_lg)[0]
+            equity_value = float(_eq["equity"].iloc[-1]) if not _eq.empty else None
+    k = st.columns(3)
+    k[0].metric("진행중 평가금액", f"${risk['value']:,.0f}")
+    k[1].metric("총 오픈 리스크", f"${risk['risk']:,.0f}",
+                help="모든 진행중 포지션이 현재 손절가까지 내려갔을 때의 손실 합계(현재가 − 손절가) × 잔여 수량.")
+    base = equity_value or risk["value"]
+    k[2].metric("리스크 / " + ("계좌" if equity_value else "평가금액"), f"{risk['risk'] / base:.1%}" if base else "-")
+    rows = ja.position_gauge_rows(open_trades, lc, _TP1_PCT, _TP2_PCT)
+    if rows:
+        st.markdown("**🎚 손절 · 목표 위치** — 매수가 대비 %, ★ 현재가, ◆ TP1·TP2, 왼쪽 눈금 손절")
+        _plot(jc.fig_gauge(rows))
 
 
 def _closed_table_rows(res: pd.DataFrame) -> pd.DataFrame:
@@ -1069,21 +1255,32 @@ if tab_journal.open:
 
     _show_flash("flash_journal")
     _render_broker_import(trades_df)
-    _render_dividends_and_etf()
     if trades_df.empty:
         st.info("아직 등록된 포지션이 없습니다. 좌측 사이드바 '📓 매매일지' 탭이나 스크리닝 후보 카드의 "
                 "'📝 매수 기록'으로 등록해 보세요.")
     else:
-        tab_open, tab_closed, tab_history = st.tabs([
+        p_start, p_end, p_pick = _period_picker(trades_df, signals_df)
+        closed_res_all = (jr.trade_results(closed_trades, exits_df, signals_df) if not closed_trades.empty
+                          else pd.DataFrame())
+        tab_dash, tab_open, tab_closed, tab_history, tab_div = st.tabs([
+            "📊 대시보드",
             f"🟢 진행중 ({len(open_trades)})",
             f"⚫ 종료 ({len(closed_trades)})",
             f"📜 보관함 ({len(archived_trades)})",
+            "💵 배당·ETF",
         ])
+
+        with tab_dash:
+            _render_dashboard(trades_df, exits_df, signals_df, open_trades, closed_res_all, p_start, p_end)
+
+        with tab_div:
+            _render_dividends_and_etf(wrap=False)
 
         with tab_open:
             if open_trades.empty:
                 st.info("현재 보유(OPEN) 포지션이 없습니다.")
             else:
+                _render_position_overview(open_trades)
                 _render_pending_signals(open_trades, signals_df)
                 open_tbl = _open_table_rows(open_trades, signals_df)
                 sel_id = _select_table(
@@ -1097,8 +1294,10 @@ if tab_journal.open:
             if closed_trades.empty:
                 st.info("종료된 포지션이 없습니다.")
             else:
-                closed_res = jr.trade_results(closed_trades, exits_df, signals_df)
+                closed_res = _filter_results_by_exit(closed_res_all, p_start, p_end)
                 div_df = broker_import.load_dividends()
+                if p_pick != ja.PERIOD_ALL:
+                    st.caption(f"기간 필터({p_pick}) 적용 중 — 매도일이 기간 안에 있는 종료 거래만 표시합니다.")
                 _render_perf_summary(closed_res, trades_df, exits_df, div_df)
                 try:
                     xl_bytes = jr.build_excel(trades_df, exits_df, signals_df, div_df)

@@ -6,3 +6,4 @@ streamlit>=1.38
 requests>=2.31
 xlsxwriter>=3.1
 openpyxl>=3.1
+plotly>=5.20
