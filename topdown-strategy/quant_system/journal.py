@@ -55,11 +55,12 @@ TRADE_COLUMNS = [
     "initial_shares", "remaining_shares", "initial_stop", "current_stop",
     "atr14_at_entry", "status", "phase", "last_checked_date", "memo", "archived",
     "mistake_tags", "lesson",   # 복기: 실수 태그(", " 구분), 한 줄 교훈
+    "import_key",               # 증권사 거래내역 가져오기로 만든 포지션의 매수 거래 키(중복 가져오기 방지)
 ]
 SIGNAL_COLUMNS = ["id", "trade_id", "ticker", "date", "type", "price", "suggested_shares",
                    "confirmed", "notified", "note"]
 # History에서 수동으로 기록하는 매도 내역 (분할 매도 지원 — 포지션당 여러 건 가능)
-EXIT_COLUMNS = ["id", "trade_id", "date", "price", "shares", "memo"]
+EXIT_COLUMNS = ["id", "trade_id", "date", "price", "shares", "memo", "import_key"]
 
 DISMISSED_MARK = "[체결 안 함]"
 PHASE_LABELS = {
@@ -115,7 +116,7 @@ def load_trades() -> pd.DataFrame:
                     "initial_stop", "current_stop", "atr14_at_entry"]:
             df[col] = pd.to_numeric(df[col])
         df["archived"] = df["archived"].fillna(False).astype(bool)
-        for col in ("mistake_tags", "lesson"):   # 빈 칸만 있는 컬럼이 float로 읽히는 것을 막는다
+        for col in ("asset_name", "mistake_tags", "lesson", "import_key"):   # 빈 칸만 있는 컬럼이 float로 읽히는 것을 막는다
             df[col] = df[col].astype(object).where(df[col].notna(), "")
     return df
 
@@ -146,6 +147,7 @@ def load_exits() -> pd.DataFrame:
         df["date"] = pd.to_datetime(df["date"]).dt.date
         df["price"] = pd.to_numeric(df["price"])
         df["shares"] = pd.to_numeric(df["shares"]).astype(int)
+        df["import_key"] = df["import_key"].astype(object).where(df["import_key"].notna(), "")
     return df
 
 
@@ -353,9 +355,12 @@ def update_trade(trade_id: str, entry_date=None, entry_price: float | None = Non
 # ------------------------------------------------------------------
 # 진입 미리보기 / 등록
 # ------------------------------------------------------------------
-def preview_entry(ticker: str, entry_date, entry_price: float) -> dict:
-    """티커/매매일/매수가만으로 ATR14·손절가·TP1/TP2 목표가를 즉시 계산한다."""
-    df = fetch_ohlcv(ticker, period="5y")
+def preview_entry(ticker: str, entry_date, entry_price: float, df: pd.DataFrame | None = None) -> dict:
+    """티커/매매일/매수가만으로 ATR14·손절가·TP1/TP2 목표가를 즉시 계산한다.
+
+    df를 주면(여러 건을 한꺼번에 처리할 때) 시세를 다시 내려받지 않고 그 데이터를 쓴다."""
+    if df is None:
+        df = fetch_ohlcv(ticker, period="5y")
     if df.empty:
         return {"error": f"{ticker} 시세 데이터를 불러올 수 없습니다."}
 
@@ -427,6 +432,7 @@ def add_trade(ticker: str, entry_date, entry_price: float, shares: int,
         "archived": False,
         "mistake_tags": "",
         "lesson": "",
+        "import_key": "",
     }
     new_df = pd.DataFrame([new_row])
     trades_df = new_df if trades_df.empty else pd.concat([trades_df, new_df], ignore_index=True)

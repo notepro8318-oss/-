@@ -71,6 +71,7 @@ from journal import (
 import github_store
 import screening_history
 import journal_review as jr
+import broker_import
 
 st.set_page_config(page_title="TopDown Quant System", page_icon="📊", layout="wide")
 
@@ -513,6 +514,103 @@ def _render_open_detail(trow, signals_df, exits_df) -> None:
             st.rerun()
 
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def _import_prices(ticker: str) -> pd.DataFrame:
+    return fetch_ohlcv(ticker, period="5y")
+
+
+_IMPORT_MODE_LABEL = {"new": "신규", "update": "수동 기록 교체(가격 동일, 시그널 이력 유지)",
+                      "replace": "수동 기록 교체(가격 달라 새로 계산, 메모 유지)", "exists": "이미 가져온 포지션"}
+
+
+def _render_broker_import(trades_df) -> None:
+    """증권사 '미국주식 거래내역' 엑셀을 올리면 미리보기를 보여 주고, 확인하면 매매일지에 반영한다."""
+    with st.expander("📤 증권사 거래내역 가져오기 (엑셀 업로드)"):
+        st.caption("'미국주식 거래내역' 엑셀을 올리면 개별주의 매수·매도를 일지에 반영합니다. 매수 1건이 포지션 1건이 되고 "
+                   "매도는 선입선출로 연결되어 분할 매도로 기록됩니다. 같은 파일을 다시 올려도 이미 반영한 거래는 건너뛰고 "
+                   "새 거래만 추가합니다. ETF, 매수 기록이 없는 종목의 매도, 입출금·배당·수수료는 가져오지 않으며 "
+                   "이체 내역의 이름·계좌번호는 읽지 않습니다.")
+        up = st.file_uploader("거래내역 엑셀 (.xlsx)", type=["xlsx"], key="broker_upload")
+        if up is None:
+            return
+        try:
+            parsed, info = broker_import.parse_statement(up.getvalue())
+        except Exception as e:
+            st.error(f"파일을 읽지 못했습니다: {e}")
+            return
+
+        extra = st.session_state.setdefault("bi_extra", {})
+        name_map = {**broker_import.load_name_map(), **extra}
+        unmapped = sorted(n for n in parsed["name"].unique() if n not in name_map)
+        if unmapped:
+            st.warning(f"티커를 모르는 종목 {len(unmapped)}개가 있습니다. 티커와 종류를 알려 주세요 "
+                       "(입력하지 않으면 이번 가져오기에서 제외됩니다).")
+            with st.form("bi_map_form", border=False):
+                entries = {}
+                for n in unmapped:
+                    c1, c2, c3 = st.columns([3, 1.5, 1.5])
+                    c1.markdown(f"**{n}**")
+                    t = c2.text_input("티커", key=f"bi_t_{n}", label_visibility="collapsed", placeholder="티커 (예: ABBV)")
+                    k = c3.selectbox("종류", ["개별주", "ETF"], key=f"bi_k_{n}", label_visibility="collapsed")
+                    entries[n] = (t, k)
+                if st.form_submit_button("매핑 적용"):
+                    for n, (t, k) in entries.items():
+                        if t.strip():
+                            extra[n] = {"ticker": t.strip().upper(), "kind": "ETF" if k == "ETF" else "STOCK"}
+                    st.rerun()
+
+        with st.spinner("시세로 체결일·손절가를 계산하는 중..."):
+            plan = broker_import.build_plan(parsed, load_trades(), load_exits(), load_signals(), name_map, _import_prices)
+        sm = plan["summary"] if "summary" in plan else {"new_lots": 0, "replaced": 0, "existing": 0, "new_sells": 0, "to_apply": 0}
+        st.caption(f"파일 기간 {info['start']} ~ {info['end']} · 전체 {info['rows_total']}행 중 매수·매도 {info['rows_trade']}행")
+        k = st.columns(4)
+        k[0].metric("새 포지션", f"{sm['new_lots']}건")
+        k[1].metric("수동 기록 교체", f"{sm['replaced']}건")
+        k[2].metric("추가될 매도", f"{sm['new_sells']}건")
+        k[3].metric("이미 반영됨", f"{sm['existing']}건")
+
+        rows = []
+        for l in plan["lots"]:
+            if l["mode"] == "exists" and not l["new_sells"]:
+                continue
+            shown = l["new_sells"] if l["mode"] == "exists" else l["sells"]
+            rows.append({"종목": l["ticker"], "매수일(미국)": str(l["date"]), "매수가": l["price"], "수량": l["qty"],
+                         "매도 내역": " · ".join(f"{s['date']} {s['price']:.2f}×{s['shares']}" for s in shown) or "-",
+                         "상태": "진행중" if l["remaining"] > 0 else "종료", "처리": _IMPORT_MODE_LABEL[l["mode"]]})
+        if rows:
+            st.dataframe(pd.DataFrame(rows).style.format({"매수가": "{:.2f}"}), hide_index=True, use_container_width=True)
+        else:
+            st.success("반영할 새 거래가 없습니다. 이미 모두 가져온 파일입니다.")
+
+        if plan["excluded_etf"]:
+            st.caption("제외한 ETF: " + ", ".join(f"{n} {c}건" for n, c in plan["excluded_etf"].items()))
+        if plan["dropped_sells"]:
+            st.caption("제외한 매도(파일에 매수 기록이 없는 수량): " + ", ".join(
+                f"{d['ticker']} {d['date']} {d['qty']}주" for d in plan["dropped_sells"]))
+        if plan["fractional"]:
+            st.caption("제외한 소수점 수량 거래: " + ", ".join(plan["fractional"]))
+        if plan["kept_manual"]:
+            st.warning("파일의 어떤 거래와도 맞지 않아 그대로 둔 수동 기록: " + ", ".join(
+                f"{k['ticker']} {k['date']} {k['price']:.2f}×{k['shares']}" for k in plan["kept_manual"]) +
+                " — 중복이라면 직접 삭제해 주세요.")
+        if plan["balance_warnings"]:
+            st.warning("파일의 보유수량과 거래 내역이 맞지 않는 곳이 있습니다:\n- " + "\n- ".join(plan["balance_warnings"]))
+        if sm["replaced"]:
+            st.info("수동 기록 교체: 같은 종목·비슷한 가격(±2%)의 기존 수동 기록을 실제 체결로 바꿉니다. "
+                    "매수 이유 메모와 복기 내용은 옮겨지고, 기존에 기록한 매도 내역은 파일의 매도로 대체됩니다.")
+
+        if st.button(f"✅ 일지에 반영 ({sm['to_apply']}건)", type="primary", disabled=sm["to_apply"] == 0, key="bi_apply"):
+            with st.spinner("일지에 반영하는 중..."):
+                res = broker_import.apply_plan(plan, extra_map=extra)
+            load_dashboard_metrics.clear()
+            if res["errors"]:
+                _flash("flash_journal", "warning", "일부 오류: " + " / ".join(res["errors"]))
+            else:
+                _flash("flash_journal", "success",
+                       f"가져오기 완료 — 새 포지션 {res['created']}건, 수동 기록 교체 {res['replaced']}건, 매도 {res['exits_added']}건 추가.")
+            st.rerun()
+
+
 def _closed_table_rows(res: pd.DataFrame) -> pd.DataFrame:
     """jr.trade_results 결과를 종료 탭 표 형태(한글 컬럼)로 바꾼다."""
     return pd.DataFrame({
@@ -912,6 +1010,7 @@ if tab_journal.open:
         st.divider()
 
     _show_flash("flash_journal")
+    _render_broker_import(trades_df)
     if trades_df.empty:
         st.info("아직 등록된 포지션이 없습니다. 좌측 사이드바 '📓 매매일지' 탭이나 스크리닝 후보 카드의 "
                 "'📝 매수 기록'으로 등록해 보세요.")
