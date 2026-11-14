@@ -54,12 +54,14 @@ TRADE_COLUMNS = [
     "id", "ticker", "asset_name", "entry_date", "entry_price",
     "initial_shares", "remaining_shares", "initial_stop", "current_stop",
     "atr14_at_entry", "status", "phase", "last_checked_date", "memo", "archived",
+    "mistake_tags", "lesson",   # 복기: 실수 태그(", " 구분), 한 줄 교훈
 ]
 SIGNAL_COLUMNS = ["id", "trade_id", "ticker", "date", "type", "price", "suggested_shares",
                    "confirmed", "notified", "note"]
 # History에서 수동으로 기록하는 매도 내역 (분할 매도 지원 — 포지션당 여러 건 가능)
 EXIT_COLUMNS = ["id", "trade_id", "date", "price", "shares", "memo"]
 
+DISMISSED_MARK = "[체결 안 함]"
 PHASE_LABELS = {
     "STAGE_0": "STAGE_0 · 대기 (TP1 전)",
     "STAGE_1": "STAGE_1 · TP1 완료 (TP2 대기, 손절가 본전)",
@@ -113,6 +115,8 @@ def load_trades() -> pd.DataFrame:
                     "initial_stop", "current_stop", "atr14_at_entry"]:
             df[col] = pd.to_numeric(df[col])
         df["archived"] = df["archived"].fillna(False).astype(bool)
+        for col in ("mistake_tags", "lesson"):   # 빈 칸만 있는 컬럼이 float로 읽히는 것을 막는다
+            df[col] = df[col].astype(object).where(df[col].notna(), "")
     return df
 
 
@@ -274,7 +278,24 @@ def dismiss_signal(signal_id: str) -> dict:
     if sig["type"] not in ("TP1", "TP2"):
         return {"error": "청산 시그널은 체결 기록(전량 매도)으로 처리해 주세요."}
     signals_df.loc[signals_df["id"] == signal_id, "confirmed"] = True
+    # 복기에서 "체결하지 않고 건너뜀"과 "체결을 확인함"을 구분할 수 있게 표시를 남긴다.
+    signals_df.loc[signals_df["id"] == signal_id, "note"] = f"{sig['note'] if pd.notna(sig['note']) else ''} {DISMISSED_MARK}".strip()
     save_signals(signals_df, f"Dismiss signal {signal_id}")
+    return {"ok": True}
+
+
+def update_review(trade_id: str, mistake_tags: list[str] | None = None, lesson: str | None = None) -> dict:
+    """복기 필드(실수 태그, 한 줄 교훈)를 저장한다. 진행중/종료/보관 어느 상태에서도 수정할 수 있다."""
+    trades_df = load_trades()
+    matches = trades_df.index[trades_df["id"] == trade_id]
+    if len(matches) == 0:
+        return {"error": "포지션을 찾을 수 없습니다."}
+    i = matches[0]
+    if mistake_tags is not None:
+        trades_df.at[i, "mistake_tags"] = ", ".join(t.strip() for t in mistake_tags if t.strip())
+    if lesson is not None:
+        trades_df.at[i, "lesson"] = lesson.strip()
+    save_trades(trades_df, f"Review: {trades_df.at[i, 'ticker']}")
     return {"ok": True}
 
 
@@ -404,6 +425,8 @@ def add_trade(ticker: str, entry_date, entry_price: float, shares: int,
         "last_checked_date": entry_idx.date() - pd.Timedelta(days=1),
         "memo": memo.strip(),
         "archived": False,
+        "mistake_tags": "",
+        "lesson": "",
     }
     new_df = pd.DataFrame([new_row])
     trades_df = new_df if trades_df.empty else pd.concat([trades_df, new_df], ignore_index=True)

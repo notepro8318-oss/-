@@ -63,13 +63,14 @@ from risk import RiskManager
 from sector_view import PERIODS, sector_label, build_sector_table, table_view, line_chart, price_chart
 from journal import (
     load_trades, load_signals, preview_entry, add_trade, delete_trade, update_trade, fill_signal, dismiss_signal,
-    archive_trade, restore_trade,
+    archive_trade, restore_trade, update_review,
     load_exits, add_exit, delete_exit, record_sale, undo_sale,
     scan_open_trades, confirm_signal, get_dashboard_metrics,
     PHASE_LABELS, SIGNAL_LABELS, EXIT_SIGNAL_TYPES, summarize_closed_trade, sector_of, resolve_sector,
 )
 import github_store
 import screening_history
+import journal_review as jr
 
 st.set_page_config(page_title="TopDown Quant System", page_icon="📊", layout="wide")
 
@@ -512,23 +513,77 @@ def _render_open_detail(trow, signals_df, exits_df) -> None:
             st.rerun()
 
 
-def _closed_table_rows(closed_df, exits_df, signals_df):
-    rows, sums = [], []
-    for _, t in closed_df.iterrows():
-        sm = summarize_closed_trade(t, exits_df, signals_df)
-        entry, stop = float(t["entry_price"]), float(t["initial_stop"])
-        risk = entry - stop
-        have = sm["exit_price"] is not None
-        rows.append({
-            "종목": _stockanalysis_url(t["ticker"]), "매수일": str(t["entry_date"]), "매수가": entry,
-            "매도일": str(sm["exit_date"]) if have else "-",
-            "평균 매도가": sm["exit_price"] if have else float("nan"),
-            "보유일": sm["hold_days"] if have else float("nan"),
-            "손익률(%)": sm["return_pct"] if have else float("nan"),
-            "R배수": (sm["exit_price"] - entry) / risk if have and risk > 0 else float("nan"),
-        })
-        sums.append(sm)
-    return pd.DataFrame(rows), sums
+def _closed_table_rows(res: pd.DataFrame) -> pd.DataFrame:
+    """jr.trade_results 결과를 종료 탭 표 형태(한글 컬럼)로 바꾼다."""
+    return pd.DataFrame({
+        "종목": res["ticker"].map(_stockanalysis_url), "매수일": res["entry_date"].astype(str),
+        "매수가": res["entry_price"],
+        "매도일": res["exit_date"].map(lambda d: str(d) if pd.notna(d) else "-"),
+        "평균 매도가": res["exit_price"], "보유일": res["hold_days"],
+        "손익률(%)": res["return_pct"], "R배수": res["r_multiple"],
+        "규칙 준수": res["adherence"], "실수 태그": res["tags"], "교훈": res["lesson"],
+    })
+
+
+def _render_perf_summary(res: pd.DataFrame, trades_all, exits_df) -> None:
+    """종료 탭 상단: 성과 지표 + 월별 손익/규칙 준수/실수 태그 분석."""
+    perf = jr.performance(res)
+    if perf["n"] == 0:
+        st.caption("매도 기록이 있는 종료 포지션이 생기면 승률·손익비·기대값이 여기에 표시됩니다.")
+        return
+    k = st.columns(6)
+    k[0].metric("종료 거래", f"{perf['n']}건", help=f"{perf['wins']}승 {perf['losses']}패")
+    k[1].metric("승률", f"{perf['win_rate']:.0%}", help=f"{perf['wins']}승 {perf['losses']}패")
+    k[2].metric("손익비", "-" if pd.isna(perf["payoff"]) else f"{perf['payoff']:.2f}",
+                help=f"평균 수익 {perf['avg_win_pct']:+.1f}% ÷ 평균 손실 {abs(perf['avg_loss_pct']):.1f}%"
+                if pd.notna(perf["payoff"]) else "수익 또는 손실 거래가 없어 계산할 수 없습니다.")
+    k[3].metric("평균 R", "-" if pd.isna(perf["avg_r"]) else f"{perf['avg_r']:+.2f}R",
+                help="거래 1건당 평균 R배수(기대값). 양수면 규칙대로 반복할수록 이익이 쌓이는 시스템입니다.")
+    k[4].metric("PF", "-" if pd.isna(perf["profit_factor"]) else f"{perf['profit_factor']:.2f}",
+                help="프로핏 팩터 = 총이익 / 총손실. 1보다 커야 이익입니다.")
+    k[5].metric("실현손익", f"${perf['realized_pnl']:+,.0f}", help="종료 포지션의 (평균 매도가 − 매수가) × 매도 수량 합계. 수수료·환율 제외.")
+    with st.expander("📊 월별 손익 · 규칙 준수별 · 실수 태그별 분석"):
+        monthly = jr.monthly_realized(trades_all, exits_df)
+        c1, c2 = st.columns(2)
+        with c1:
+            st.markdown("**월별 실현손익** (매도일 기준, 진행중 포지션의 분할 매도 포함)")
+            st.dataframe(_smap(monthly.style, kr_style, ["실현손익"]).format({"실현손익": "{:+,.2f}"}),
+                         hide_index=True, use_container_width=True)
+        with c2:
+            st.markdown("**규칙 준수별 성과** — 시그널대로 매도한 거래와 아닌 거래 비교")
+            adh = jr.adherence_stats(res)
+            st.dataframe(_smap(adh.style, kr_style, ["평균 R", "평균 손익률(%)"])
+                         .format({"평균 R": "{:+.2f}R", "평균 손익률(%)": "{:+.2f}%"}, na_rep="-"),
+                         hide_index=True, use_container_width=True)
+            tags = jr.tag_stats(res)
+            if not tags.empty:
+                st.markdown("**실수 태그별 성과**")
+                st.dataframe(_smap(tags.style, kr_style, ["평균 R", "평균 손익률(%)"])
+                             .format({"평균 R": "{:+.2f}R", "평균 손익률(%)": "{:+.2f}%"}, na_rep="-"),
+                             hide_index=True, use_container_width=True)
+        st.caption("규칙 준수 = 시그널 발생 후 1영업일 이내 매도(준수) / 그 이후 매도(지연) / 매도 없음(미이행) / "
+                   "TP를 '체결 안 함'으로 건너뜀. 영업일은 주말만 제외하며 미국 휴장일은 반영하지 않습니다.")
+
+
+def _render_review_form(crow, res_row) -> None:
+    """종료 포지션 복기: 규칙 준수 자동 판정 + 실수 태그 + 한 줄 교훈."""
+    tid = crow["id"]
+    verdict = res_row["adherence"]
+    icon = {"준수": "✅", "지연": "⏱", "미이행": "⚠️", "TP 건너뜀": "⏭", "시그널 없음": "✋"}.get(verdict, "➖")
+    st.markdown(f"**📝 복기** · 규칙 준수 {icon} **{verdict}**" +
+                (f" — {res_row['adherence_detail']}" if verdict != "-" else ""))
+    cur_tags = jr.split_tags(crow.get("mistake_tags"))
+    options = jr.MISTAKE_TAGS + [t for t in cur_tags if t not in jr.MISTAKE_TAGS]
+    _show_flash(f"flash_review_{tid}")
+    with st.form(f"review_form_{tid}", border=False):
+        tags = st.multiselect("실수 태그 (해당되는 것만, 없으면 비워 두세요)", options, default=cur_tags)
+        lesson = st.text_input("한 줄 교훈", value=str(crow["lesson"]) if _has_text(crow.get("lesson")) else "",
+                               placeholder="예: 손절 시그널은 다음 날 시가에 바로 정리한다")
+        if st.form_submit_button("💾 복기 저장"):
+            res = update_review(tid, tags, lesson)
+            _flash(f"flash_review_{tid}", "warning" if "error" in res else "success",
+                   res.get("error", "복기를 저장했습니다."))
+            st.rerun()
 
 
 def _quick_record_popover(ticker: str, rank_no: int, score: float, entry_price: float, shares: int,
@@ -884,15 +939,35 @@ if tab_journal.open:
             if closed_trades.empty:
                 st.info("종료된 포지션이 없습니다.")
             else:
-                closed_tbl, closed_sums = _closed_table_rows(closed_trades, exits_df, signals_df)
+                closed_res = jr.trade_results(closed_trades, exits_df, signals_df)
+                _render_perf_summary(closed_res, trades_df, exits_df)
+                try:
+                    xl_bytes = jr.build_excel(trades_df, exits_df, signals_df)
+                    st.download_button(
+                        "📥 매매일지 엑셀 다운로드 (거래내역 · 분할 매도 · 월별 손익 · 복기 요약)",
+                        data=xl_bytes, file_name=f"trade_journal_{datetime.now():%Y%m%d}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        use_container_width=True)
+                except Exception as _e:
+                    st.warning(f"엑셀 생성 실패: {_e}")
+                view_pick = st.radio("보기", ["전체", "수익", "손실"], horizontal=True, label_visibility="collapsed",
+                                     key="closed_filter")
+                if view_pick == "수익":
+                    keep = closed_res["return_pct"] > 0
+                elif view_pick == "손실":
+                    keep = closed_res["return_pct"] <= 0
+                else:
+                    keep = pd.Series(True, index=closed_res.index)
+                shown = closed_res[keep].reset_index(drop=True)
+                closed_tbl = _closed_table_rows(shown)
                 sel_id = _select_table(
                     _smap(closed_tbl.style, kr_style, ["손익률(%)", "R배수"])
                     .format({"매수가": "{:.2f}", "평균 매도가": "{:.2f}", "보유일": "{:.0f}일",
                              "손익률(%)": "{:+.2f}%", "R배수": "{:+.2f}R"}, na_rep="-"),
-                    tuple(closed_trades["id"]), "closed_tbl", {"종목": _TICKER_LINK})
+                    tuple(shown["id"]), "closed_tbl", {"종목": _TICKER_LINK})
                 st.caption("매도일·평균 매도가는 기록한 매도 내역(없으면 체결 확인된 시그널)의 마지막 매도일과 수량 가중 평균가입니다. "
                            "손익률 = 평균 매도가 / 매수가 − 1, R배수 = (평균 매도가 − 매수가) / (매수가 − 초기 손절가). "
-                           "행을 선택하면 매도 내역과 보관 버튼이 열립니다.")
+                           "행을 선택하면 매도 내역·복기(실수 태그·교훈)·보관 버튼이 열립니다.")
                 if sel_id is not None:
                     crow = closed_trades[closed_trades["id"] == sel_id].iloc[0]
                     with st.container(border=True):
@@ -900,6 +975,7 @@ if tab_journal.open:
                                     f"{crow['entry_date']} 매수 · 매수가 {crow['entry_price']:.2f}" +
                                     (f" · _{crow['memo']}_" if _has_text(crow.get("memo")) else ""))
                         _render_exit_list(crow, exits_df, f"closed_{sel_id}", allow_undo=False)
+                        _render_review_form(crow, closed_res[closed_res["id"] == sel_id].iloc[0])
                         if exits_df.empty or exits_df[exits_df["trade_id"] == sel_id].empty:
                             st.caption("기록된 매도 내역이 없습니다. 보관함의 ➕ 매도에서 추가할 수 있습니다.")
                         if st.button("📁 보관", key=f"closed_archive_{sel_id}"):
