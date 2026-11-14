@@ -169,11 +169,14 @@ def delete_exit(exit_id: str) -> None:
     save_exits(exits_df, f"Delete exit {exit_id}")
 
 
-def record_sale(trade_id: str, exit_date, price: float, shares: int, memo: str = "") -> dict:
+def record_sale(trade_id: str, exit_date, price: float, shares: int, memo: str = "",
+                signal_id: str | None = None) -> dict:
     """진행중(OPEN) 포지션의 실제 매도를 매도 기록에 남기고 잔여 수량을 차감한다.
 
     - 잔여 수량보다 많이 팔 수 없다. 전량 매도하면 포지션은 CLOSED(종료)가 된다.
-    - 같은 포지션에 확인 대기 중인 TP1/TP2 시그널이 있으면 가장 오래된 1건을 확인 처리한다
+    - signal_id를 주면(시그널 카드에서 체결을 기록한 경우) 그 시그널만 확인 처리한다. TP1/TP2는 바로,
+      청산 시그널(손절/Runner 청산)은 전량 매도로 포지션이 종료될 때만 확인 처리한다.
+    - signal_id가 없으면 확인 대기 중인 TP1/TP2 중 가장 오래된 1건을 확인 처리한다
       (실제 체결 수량을 직접 기록했으므로 "체결 확인"으로 다시 차감하면 이중 차감되기 때문).
     """
     shares = int(shares)
@@ -199,8 +202,12 @@ def record_sale(trade_id: str, exit_date, price: float, shares: int, memo: str =
     signals_df = load_signals()
     if not signals_df.empty:
         unconfirmed = signals_df[(signals_df["trade_id"] == trade_id) & (~signals_df["confirmed"])]
-        pend_tp = unconfirmed[unconfirmed["type"].isin(["TP1", "TP2"])]
-        to_confirm = list(pend_tp.sort_values("date").index[:1])
+        if signal_id is not None:
+            target = unconfirmed[unconfirmed["id"] == signal_id]
+            to_confirm = list(target[target["type"].isin(["TP1", "TP2"])].index)
+        else:
+            pend_tp = unconfirmed[unconfirmed["type"].isin(["TP1", "TP2"])]
+            to_confirm = list(pend_tp.sort_values("date").index[:1])
         if left == 0:
             to_confirm += list(unconfirmed[unconfirmed["type"].isin(EXIT_SIGNAL_TYPES)].index)
         if to_confirm:
@@ -226,6 +233,100 @@ def undo_sale(exit_id: str) -> None:
                        int(trades_df.at[idx, "remaining_shares"]) + int(ex["shares"]))
         trades_df.at[idx, "remaining_shares"] = restored
         save_trades(trades_df, f"Undo sale {exit_id}")
+
+
+def fill_signal(signal_id: str, fill_date, price: float, shares: int, memo: str = "") -> dict:
+    """시그널 카드에서 체결 내용(체결일/체결가/수량)을 입력해 매도 기록과 시그널 확인을 한 번에 처리한다.
+
+    예전의 '체결 확인'은 체결가 없이 시그널 제안 수량만 차감했다. 이 함수는 실제 체결가·체결일을
+    매도 기록(trade_exits)에 남기므로 종료 탭의 손익률과 보유일이 정확해진다.
+    """
+    signals_df = load_signals()
+    match = signals_df[signals_df["id"] == signal_id] if not signals_df.empty else signals_df
+    if match.empty:
+        return {"error": "시그널을 찾을 수 없습니다."}
+    sig = match.iloc[0]
+    if sig["confirmed"]:
+        return {"error": "이미 확인된 시그널입니다."}
+    label = SIGNAL_LABELS.get(sig["type"], sig["type"])
+    result = record_sale(sig["trade_id"], fill_date, price, shares, memo or label, signal_id=signal_id)
+    if "error" in result:
+        return result
+    if sig["type"] in EXIT_SIGNAL_TYPES and not result["closed"]:
+        result["note"] = "전량이 아니어서 청산 시그널은 확인 대기로 남겨 두었습니다. 남은 수량을 매도하면 확인 처리됩니다."
+    return result
+
+
+def dismiss_signal(signal_id: str) -> dict:
+    """체결하지 않고 TP1/TP2 시그널만 확인 처리한다 (수량·포지션은 바뀌지 않는다).
+
+    소액 포지션은 제안 수량이 0주로 반올림되거나 의도적으로 익절을 건너뛸 수 있어, 체결 기록 없이도
+    대기 목록에서 치울 수 있어야 한다. 청산 시그널(손절/Runner 청산)은 포지션 종료와 연결돼 있어
+    체결 기록(전량 매도)으로만 처리한다.
+    """
+    signals_df = load_signals()
+    match = signals_df[signals_df["id"] == signal_id] if not signals_df.empty else signals_df
+    if match.empty:
+        return {"error": "시그널을 찾을 수 없습니다."}
+    sig = match.iloc[0]
+    if sig["confirmed"]:
+        return {"error": "이미 확인된 시그널입니다."}
+    if sig["type"] not in ("TP1", "TP2"):
+        return {"error": "청산 시그널은 체결 기록(전량 매도)으로 처리해 주세요."}
+    signals_df.loc[signals_df["id"] == signal_id, "confirmed"] = True
+    save_signals(signals_df, f"Dismiss signal {signal_id}")
+    return {"ok": True}
+
+
+# 입력 후 고칠 수 있는 항목. 매수가/수량/체결일은 시그널 판정의 기준이라 아직 아무 이력이 없을 때만 바꿀 수 있다.
+def update_trade(trade_id: str, entry_date=None, entry_price: float | None = None,
+                 shares: int | None = None, memo: str | None = None) -> dict:
+    """포지션의 메모/체결일/매수가/수량을 수정한다.
+
+    - 메모는 언제든 수정할 수 있다.
+    - 체결일·매수가·수량은 OPEN + STAGE_0 + 매도/시그널 이력이 없을 때만 수정한다. 매수가나 체결일이
+      바뀌면 ATR14·손절가를 다시 계산하고 시그널 스캔 시작일을 체결일로 되돌린다.
+    """
+    trades_df = load_trades()
+    matches = trades_df.index[trades_df["id"] == trade_id]
+    if len(matches) == 0:
+        return {"error": "포지션을 찾을 수 없습니다."}
+    idx = matches[0]
+    row = trades_df.loc[idx]
+
+    cur_date, cur_price, cur_shares = row["entry_date"], float(row["entry_price"]), int(row["initial_shares"])
+    new_date = pd.Timestamp(entry_date).date() if entry_date is not None else cur_date
+    new_price = float(entry_price) if entry_price is not None else cur_price
+    new_shares = int(shares) if shares is not None else cur_shares
+    changed_core = (new_date != cur_date) or abs(new_price - cur_price) > 1e-9 or new_shares != cur_shares
+
+    if changed_core:
+        if new_price <= 0 or new_shares <= 0:
+            return {"error": "매수가와 수량을 올바르게 입력해 주세요."}
+        exits_df, signals_df = load_exits(), load_signals()
+        has_exit = (not exits_df.empty) and (exits_df["trade_id"] == trade_id).any()
+        has_signal = (not signals_df.empty) and (signals_df["trade_id"] == trade_id).any()
+        untouched = (row["status"] == "OPEN" and row["phase"] == "STAGE_0"
+                     and int(row["remaining_shares"]) == cur_shares and not has_exit and not has_signal)
+        if not untouched:
+            return {"error": "시그널이나 매도 이력이 있어 체결일·매수가·수량은 수정할 수 없습니다. "
+                             "메모만 수정할 수 있고, 잘못 입력했다면 완전 삭제 후 다시 등록해 주세요."}
+        if (new_date != cur_date) or abs(new_price - cur_price) > 1e-9:
+            preview = preview_entry(row["ticker"], new_date, new_price)
+            if "error" in preview:
+                return preview
+            trades_df.at[idx, "entry_date"] = preview["entry_idx"].date()
+            trades_df.at[idx, "entry_price"] = new_price
+            trades_df.at[idx, "initial_stop"] = preview["initial_stop"]
+            trades_df.at[idx, "current_stop"] = preview["initial_stop"]
+            trades_df.at[idx, "atr14_at_entry"] = preview["atr14"]
+            trades_df.at[idx, "last_checked_date"] = preview["entry_idx"].date() - pd.Timedelta(days=1)
+        trades_df.at[idx, "initial_shares"] = new_shares
+        trades_df.at[idx, "remaining_shares"] = new_shares
+    if memo is not None:
+        trades_df.at[idx, "memo"] = memo.strip()
+    save_trades(trades_df, f"Edit trade: {row['ticker']}")
+    return {"ok": True, "core_changed": changed_core}
 
 
 # ------------------------------------------------------------------

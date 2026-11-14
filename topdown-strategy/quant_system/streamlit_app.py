@@ -62,7 +62,7 @@ from execution import ExecutionEngine
 from risk import RiskManager
 from sector_view import PERIODS, sector_label, build_sector_table, table_view, line_chart, price_chart
 from journal import (
-    load_trades, load_signals, preview_entry, add_trade, delete_trade,
+    load_trades, load_signals, preview_entry, add_trade, delete_trade, update_trade, fill_signal, dismiss_signal,
     archive_trade, restore_trade,
     load_exits, add_exit, delete_exit, record_sale, undo_sale,
     scan_open_trades, confirm_signal, get_dashboard_metrics,
@@ -250,6 +250,315 @@ def _stockanalysis_url(ticker: str) -> str:
     return f"https://stockanalysis.com/stocks/{ticker}/"
 
 
+# ------------------------------------------------------------------
+# 매매일지 화면 공용 헬퍼 — 한국식 색상(상승 빨강 / 하락 파랑)
+# ------------------------------------------------------------------
+KR_UP, KR_DOWN = "#E03131", "#1C7ED6"
+PHASE_SHORT = {"STAGE_0": "🟡 대기", "STAGE_1": "🔵 TP1 완료", "STAGE_2": "🟢 Runner"}
+SIGNAL_SHORT = {"TP1": "TP1", "TP2": "TP2", "STOP": "손절", "BREAKEVEN_STOP": "본전손절", "RUNNER_EXIT": "Runner청산"}
+_TICKER_LINK = st.column_config.LinkColumn("종목", display_text=r"stocks/(.*?)/")
+
+
+def kr_style(v) -> str:
+    """Styler용 셀 스타일: 양수 빨강, 음수 파랑(한국식). 0/결측은 기본색."""
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return ""
+    if f != f or f == 0:
+        return ""
+    return f"color: {KR_UP if f > 0 else KR_DOWN}; font-weight: 600"
+
+
+def _smap(styler, func, subset):
+    """Styler.map(pandas>=2.1) / applymap(구버전) 호환 래퍼."""
+    return (styler.map if hasattr(styler, "map") else styler.applymap)(func, subset=subset)
+
+
+def kr_md(text: str, v) -> str:
+    """마크다운용 한국식 색상 문자열 (양수 :red[], 음수 :blue[])."""
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return text
+    if f != f or f == 0:
+        return text
+    return f":{'red' if f > 0 else 'blue'}[{text}]"
+
+
+def _flash(key: str, level: str, msg: str) -> None:
+    """st.rerun() 뒤에도 남는 안내 메시지를 예약한다 (_show_flash가 한 번 보여주고 지운다)."""
+    st.session_state[key] = (level, msg)
+
+
+def _show_flash(key: str) -> None:
+    msg = st.session_state.pop(key, None)
+    if msg:
+        getattr(st, msg[0])(msg[1])
+
+
+def _select_table(styled, ids: tuple, key_base: str, config: dict):
+    """행 하나를 선택할 수 있는 표를 그리고 선택된 행의 id(없으면 None)를 돌려준다.
+
+    목록 구성(종료/보관 등으로 행이 바뀜)이 달라지면 표 key를 바꿔 이전 선택 표시가 엉뚱한 행에 남지 않게 한다.
+    """
+    ver_key, ids_key = f"{key_base}_ver", f"{key_base}_ids"
+    if st.session_state.get(ids_key) != ids:
+        st.session_state[ids_key] = ids
+        st.session_state[ver_key] = st.session_state.get(ver_key, 0) + 1
+    ev = st.dataframe(styled, column_config=config, hide_index=True, use_container_width=True,
+                      on_select="rerun", selection_mode="single-row", key=f"{key_base}_{st.session_state[ver_key]}")
+    rows = ev.selection.rows
+    return ids[rows[0]] if rows and rows[0] < len(ids) else None
+
+
+def _is_locked(trow, exits_df, signals_df) -> bool:
+    """체결일·매수가·수량을 더 이상 고칠 수 없는 포지션인지(시그널/매도 이력이 생겼는지)."""
+    tid = trow["id"]
+    has_exit = (not exits_df.empty) and bool((exits_df["trade_id"] == tid).any())
+    has_sig = (not signals_df.empty) and bool((signals_df["trade_id"] == tid).any())
+    return (trow["status"] != "OPEN" or trow["phase"] != "STAGE_0"
+            or int(trow["remaining_shares"]) != int(trow["initial_shares"]) or has_exit or has_sig)
+
+
+def _open_table_rows(open_df, signals_df) -> pd.DataFrame:
+    rows = []
+    for _, t in open_df.iterrows():
+        m = load_dashboard_metrics(t["ticker"], float(t["entry_price"]), float(t["initial_stop"]),
+                                   float(t["current_stop"]), t["phase"])
+        ok = "error" not in m
+        entry, rem, init = float(t["entry_price"]), int(t["remaining_shares"]), int(t["initial_shares"])
+        last = m["last_close"] if ok else float("nan")
+        pend = (signals_df[(signals_df["trade_id"] == t["id"]) & (~signals_df["confirmed"])]
+                if not signals_df.empty else signals_df)
+        target = (f"{m['target_label']} {m['target_price']:.2f}" if ok and m["target_price"] is not None
+                  else "MA50 이탈")
+        rows.append({
+            "종목": _stockanalysis_url(t["ticker"]),
+            "시그널": ("🔔 " + " · ".join(SIGNAL_SHORT.get(x, x) for x in pend["type"])) if len(pend) else "",
+            "단계": PHASE_SHORT.get(t["phase"], t["phase"]),
+            "매수일": str(t["entry_date"]),
+            "매수가": entry, "현재가": last,
+            "손익률(%)": (last / entry - 1) * 100 if ok and entry else float("nan"),
+            "R배수": m["r_multiple"] if ok else float("nan"),
+            "평가손익($)": (last - entry) * rem if ok else float("nan"),
+            "손절가": float(t["current_stop"]),
+            "손절까지(%)": m["dist_to_stop_pct"] if ok else float("nan"),
+            "다음 목표": target,
+            "목표까지(%)": (m["dist_to_target_pct"] if ok and m["dist_to_target_pct"] is not None else float("nan")),
+            "잔여/최초(주)": f"{rem:,} / {init:,}",
+        })
+    return pd.DataFrame(rows)
+
+
+def _style_open_table(df: pd.DataFrame):
+    return (_smap(df.style, kr_style, ["손익률(%)", "R배수", "평가손익($)"])
+            .format({"매수가": "{:.2f}", "현재가": "{:.2f}", "손익률(%)": "{:+.2f}%", "R배수": "{:+.2f}R",
+                     "평가손익($)": "${:+,.0f}", "손절가": "{:.2f}", "손절까지(%)": "{:+.1f}%",
+                     "목표까지(%)": "{:+.1f}%"}, na_rep="-"))
+
+
+def _render_pending_signals(open_df, signals_df) -> None:
+    """확인 대기 시그널을 표 위에 모아 보여주고, 체결일/체결가/수량을 입력하면 매도 기록+확인을 한 번에 처리한다."""
+    if signals_df.empty or open_df.empty:
+        return
+    pend = signals_df[(~signals_df["confirmed"]) & (signals_df["trade_id"].isin(open_df["id"]))]
+    if pend.empty:
+        return
+    today = datetime.now().date()
+    st.subheader(f"🔔 확인 대기 시그널 ({len(pend)}건)", divider="red")
+    st.caption("시그널대로 체결했다면 체결일·체결가·수량을 확인하고 ✅를 누르세요. 매도 기록과 시그널 확인이 한 번에 처리됩니다. "
+               "기본값은 시그널 가격·제안 수량이며 실제 체결 내용으로 고칠 수 있습니다.")
+    for _, sig in pend.sort_values("date").iterrows():
+        trade = open_df[open_df["id"] == sig["trade_id"]].iloc[0]
+        remaining = int(trade["remaining_shares"])
+        is_exit = sig["type"] in EXIT_SIGNAL_TYPES
+        default_sh = remaining if is_exit else min(int(sig["suggested_shares"]), remaining)
+        with st.container(border=True):
+            st.markdown(f"**[{trade['ticker']}]({_stockanalysis_url(trade['ticker'])})** · "
+                        f"**{SIGNAL_LABELS.get(sig['type'], sig['type'])}** — {sig['date']} 기준가 {sig['price']:.2f} · "
+                        f"제안 {int(sig['suggested_shares']):,}주 · 잔여 {remaining:,}주")
+            with st.form(f"fill_{sig['id']}", border=False):
+                c1, c2, c3, c4 = st.columns([1.3, 1.3, 1, 1.2])
+                f_date = c1.date_input("체결일", value=min(sig["date"], today), max_value=today)
+                f_price = c2.number_input("체결가", value=float(sig["price"]), min_value=0.0, step=0.01, format="%.2f")
+                f_sh = c3.number_input("수량", value=int(default_sh), min_value=0, step=1)
+                c4.markdown("<div style='height:1.7rem'></div>", unsafe_allow_html=True)
+                submitted = c4.form_submit_button("✅ 체결 기록", type="primary", use_container_width=True)
+                skipped = False if is_exit else c4.form_submit_button(
+                    "⏭ 체결 안 함", use_container_width=True, help="매도하지 않고 이 시그널만 확인 처리합니다(수량 변화 없음).")
+            if skipped:
+                res = dismiss_signal(sig["id"])
+                if "error" in res:
+                    st.error(res["error"])
+                else:
+                    _flash("flash_journal", "info", f"{trade['ticker']} {SIGNAL_SHORT.get(sig['type'], sig['type'])} "
+                                                   "시그널을 체결 없이 확인 처리했습니다.")
+                    st.rerun()
+            if submitted:
+                res = fill_signal(sig["id"], f_date, float(f_price), int(f_sh))
+                if "error" in res:
+                    st.error(res["error"])
+                else:
+                    msg = f"{trade['ticker']} {SIGNAL_SHORT.get(sig['type'], sig['type'])} 체결 기록 완료 — " + \
+                          ("전량 매도, 종료 탭으로 이동했습니다." if res["closed"] else f"잔여 {res['remaining']:,}주")
+                    if res.get("note"):
+                        msg += " " + res["note"]
+                    _flash("flash_journal", "success", msg)
+                    st.rerun()
+
+
+def _render_exit_list(trow, exits_df, key_prefix: str, allow_undo: bool) -> None:
+    trade_sales = exits_df[exits_df["trade_id"] == trow["id"]] if not exits_df.empty else exits_df
+    if trade_sales.empty:
+        return
+    st.markdown("**매도 기록**")
+    for _, ex in trade_sales.sort_values("date").iterrows():
+        pct = (ex["price"] / trow["entry_price"] - 1) * 100 if trow["entry_price"] else None
+        xcol1, xcol2 = st.columns([6, 1])
+        xcol1.markdown(f"{ex['date']} · {ex['price']:.2f} · {int(ex['shares']):,}주 · "
+                       f"{kr_md(fmt_pct(pct), pct)}" +
+                       (f" · {ex['memo']}" if _has_text(ex.get("memo")) else ""))
+        if allow_undo and xcol2.button("↩️ 취소", key=f"{key_prefix}_undo_{ex['id']}", use_container_width=True):
+            undo_sale(ex["id"])
+            st.rerun()
+
+
+def _render_open_detail(trow, signals_df, exits_df) -> None:
+    """표에서 고른 진행중 포지션의 상세: 요약 지표, 매도 기록 폼, 수정, 보관."""
+    tid, ticker = trow["id"], trow["ticker"]
+    today = datetime.now().date()
+    m = load_dashboard_metrics(ticker, float(trow["entry_price"]), float(trow["initial_stop"]),
+                               float(trow["current_stop"]), trow["phase"])
+    ok = "error" not in m
+    remaining, initial = int(trow["remaining_shares"]), int(trow["initial_shares"])
+
+    with st.container(border=True):
+        st.markdown(f"### {PHASE_SHORT.get(trow['phase'], '')} [{ticker}]({_stockanalysis_url(ticker)}) · "
+                    f"{trow['entry_date']} 매수" + (f" · _{trow['memo']}_" if _has_text(trow.get("memo")) else ""))
+        st.caption(PHASE_LABELS.get(trow["phase"], trow["phase"]) +
+                   (f" · R배수 {m['r_multiple']:+.2f}R" if ok else ""))
+        k1, k2, k3, k4, k5 = st.columns(5)
+        k1.metric("매수가", f"{trow['entry_price']:.2f}")
+        k2.metric("현재가", f"{m['last_close']:.2f}" if ok else "N/A")
+        k3.metric("손절가", f"{trow['current_stop']:.2f}")
+        if ok and m["target_price"] is not None:
+            k4.metric(f"{m['target_label']} 목표가", f"{m['target_price']:.2f}")
+        else:
+            k4.metric("목표가", "Runner(MA50)")
+        k5.metric("잔여 수량", f"{remaining:,} / {initial:,}주")
+        if ok:
+            pnl = (m["last_close"] / float(trow["entry_price"]) - 1) * 100
+            st.markdown(f"평가손익 {kr_md(fmt_pct(pnl), pnl)} · 손절까지 {fmt_pct(m['dist_to_stop_pct'])}" +
+                        (f" · {m['target_label']}까지 {fmt_pct(m['dist_to_target_pct'])}"
+                         if m["dist_to_target_pct"] is not None else ""))
+        else:
+            st.error(m["error"])
+
+        st.markdown("**💰 매도 기록**")
+        _show_flash(f"flash_sale_{tid}")
+        with st.form(f"sale_form_{tid}", clear_on_submit=True, border=False):
+            c1, c2, c3, c4, c5 = st.columns([1.3, 1.2, 1, 1.4, 1.1])
+            s_date = c1.date_input("체결일", value=today, max_value=today)
+            s_price = c2.number_input("매도가", value=None, min_value=0.0, step=0.01, format="%.2f", placeholder="매도가")
+            s_shares = c3.number_input("수량", value=None, min_value=0, step=1, placeholder="수량")
+            s_memo = c4.text_input("메모(선택)", placeholder="예: 목표가 도달")
+            c5.markdown("<div style='height:1.7rem'></div>", unsafe_allow_html=True)
+            s_all = c5.checkbox("잔여 전량")
+            s_submit = st.form_submit_button("💰 매도 기록", type="primary")
+        if s_submit:
+            shares_to_sell = remaining if s_all else (int(s_shares) if s_shares else 0)
+            if not s_price or shares_to_sell <= 0:
+                _flash(f"flash_sale_{tid}", "warning", "매도가와 수량(또는 '잔여 전량')을 입력해 주세요.")
+            else:
+                res = record_sale(tid, s_date, float(s_price), shares_to_sell, s_memo)
+                if "error" in res:
+                    _flash(f"flash_sale_{tid}", "warning", res["error"])
+                elif res["closed"]:
+                    _flash("flash_journal", "success", f"{ticker} 전량 매도 기록 완료 — 종료 탭으로 이동했습니다.")
+                else:
+                    _flash(f"flash_sale_{tid}", "success", f"매도 기록 완료 — 잔여 {res['remaining']:,}주")
+            st.rerun()
+
+        _render_exit_list(trow, exits_df, f"open_{tid}", allow_undo=True)
+
+        locked = _is_locked(trow, exits_df, signals_df)
+        with st.expander("✏️ 수정"):
+            if locked:
+                st.caption("시그널이나 매도 이력이 있어 체결일·매수가·수량은 고칠 수 없고 메모만 수정할 수 있습니다. "
+                           "잘못 입력했다면 보관함에서 완전 삭제 후 다시 등록해 주세요.")
+            _show_flash(f"flash_edit_{tid}")
+            with st.form(f"edit_form_{tid}", border=False):
+                e1, e2, e3 = st.columns(3)
+                e_date = e1.date_input("체결일", value=trow["entry_date"], max_value=today, disabled=locked)
+                e_price = e2.number_input("매수가", value=float(trow["entry_price"]), min_value=0.0, step=0.01,
+                                          format="%.2f", disabled=locked)
+                e_sh = e3.number_input("수량", value=initial, min_value=0, step=1, disabled=locked)
+                e_memo = st.text_input("메모", value=str(trow["memo"]) if _has_text(trow.get("memo")) else "")
+                e_submit = st.form_submit_button("💾 수정 저장")
+            if e_submit:
+                res = update_trade(tid, entry_date=None if locked else e_date,
+                                   entry_price=None if locked else float(e_price),
+                                   shares=None if locked else int(e_sh), memo=e_memo)
+                if "error" in res:
+                    _flash(f"flash_edit_{tid}", "warning", res["error"])
+                else:
+                    _flash(f"flash_edit_{tid}", "success", "수정했습니다." +
+                           (" 손절가를 다시 계산했습니다." if res["core_changed"] else ""))
+                st.rerun()
+
+        if st.button("📁 보관", key=f"open_archive_{tid}", help="보관함으로 옮기고 시그널 추적 대상에서 제외합니다."):
+            archive_trade(tid)
+            st.rerun()
+
+
+def _closed_table_rows(closed_df, exits_df, signals_df):
+    rows, sums = [], []
+    for _, t in closed_df.iterrows():
+        sm = summarize_closed_trade(t, exits_df, signals_df)
+        entry, stop = float(t["entry_price"]), float(t["initial_stop"])
+        risk = entry - stop
+        have = sm["exit_price"] is not None
+        rows.append({
+            "종목": _stockanalysis_url(t["ticker"]), "매수일": str(t["entry_date"]), "매수가": entry,
+            "매도일": str(sm["exit_date"]) if have else "-",
+            "평균 매도가": sm["exit_price"] if have else float("nan"),
+            "보유일": sm["hold_days"] if have else float("nan"),
+            "손익률(%)": sm["return_pct"] if have else float("nan"),
+            "R배수": (sm["exit_price"] - entry) / risk if have and risk > 0 else float("nan"),
+        })
+        sums.append(sm)
+    return pd.DataFrame(rows), sums
+
+
+def _quick_record_popover(ticker: str, rank_no: int, score: float, entry_price: float, shares: int,
+                          regime: str, sector: str) -> None:
+    """스크리닝 후보 카드의 '매수 기록' — 종목/가격/수량/매수 이유가 채워져 있어 체결 내용만 확인·수정하면 된다."""
+    held = (not open_trades.empty) and ticker in set(open_trades["ticker"])
+    ver = f"{ticker}_{entry_price:.2f}_{int(shares)}"
+    today = datetime.now().date()
+    with st.popover("📝 매수 기록"):
+        st.markdown(f"**{ticker}** · 스크리닝 {rank_no}위")
+        if held:
+            st.warning("이미 진행중인 포지션이 있습니다. 추가 매수라면 그대로 기록하세요.")
+        q_date = st.date_input("체결일", value=today, max_value=today, key=f"qr_date_{ver}")
+        q_price = st.number_input("체결가", value=round(float(entry_price), 2), min_value=0.0, step=0.01,
+                                  format="%.2f", key=f"qr_price_{ver}")
+        q_sh = st.number_input("수량", value=int(shares), min_value=0, step=1, key=f"qr_sh_{ver}")
+        q_memo = st.text_input("매수 이유(메모)", value=f"스크리닝 {rank_no}위 · 점수 {score:.1f} · {regime} · {sector}",
+                               key=f"qr_memo_{ver}")
+        if st.button("💾 매매일지에 기록", type="primary", use_container_width=True, key=f"qr_save_{ver}"):
+            if q_price <= 0 or q_sh <= 0:
+                st.warning("체결가와 수량을 입력해 주세요.")
+            else:
+                res = add_trade(ticker, q_date, float(q_price), int(q_sh), q_memo)
+                if "error" in res:
+                    st.error(res["error"])
+                else:
+                    st.toast(f"✅ {ticker} 매수 기록 완료 — 매매일지 탭에서 확인하세요.")
+
+
+
 def _fmt_comma(v) -> str:
     """숫자를 3자리마다 콤마를 넣은 문자열로 변환한다 (예: 1000000 -> '1,000,000')."""
     try:
@@ -263,30 +572,6 @@ def _parse_comma(s: str) -> float:
     """콤마/공백 등을 제거하고 숫자만 남겨 float으로 변환한다. 빈 값이면 0."""
     digits = "".join(ch for ch in str(s) if ch.isdigit() or ch == ".")
     return float(digits) if digits else 0.0
-
-
-def _on_record_sale(trade_id: str) -> None:
-    """진행중 카드의 '매도' 버튼 콜백. 입력값을 검증·기록하고 입력칸을 비운다.
-
-    위젯 값은 위젯이 그려진 뒤에는 바꿀 수 없으므로, 입력칸 초기화는 반드시
-    버튼 콜백(스크립트 재실행 전)에서 한다.
-    """
-    price_key, shares_key = f"sale_price_{trade_id}", f"sale_shares_{trade_id}"
-    price, shares = st.session_state.get(price_key), st.session_state.get(shares_key)
-    if not price or not shares:
-        st.session_state[f"sale_msg_{trade_id}"] = ("warning", "매도가와 매도수량을 입력해 주세요.")
-        return
-    result = record_sale(trade_id, datetime.now().date(), float(price), int(shares))
-    if "error" in result:
-        st.session_state[f"sale_msg_{trade_id}"] = ("warning", result["error"])
-        return
-    st.cache_data.clear()
-    st.session_state[price_key] = None
-    st.session_state[shares_key] = None
-    if result["closed"]:
-        st.session_state[f"sale_msg_{trade_id}"] = ("success", "전량 매도되어 '종료' 탭으로 이동했습니다.")
-    else:
-        st.session_state[f"sale_msg_{trade_id}"] = ("success", f"매도 기록 완료 — 잔여 {result['remaining']:,}주")
 
 
 def _render_history_card(hrow, exits_df, key_prefix: str, compact: bool = False) -> None:
@@ -347,8 +632,9 @@ def _render_history_card(hrow, exits_df, key_prefix: str, compact: bool = False)
             for _, ex in trade_exits.sort_values("date").iterrows():
                 pct = (ex["price"] / hrow["entry_price"] - 1) * 100 if hrow["entry_price"] else None
                 xcol1, xcol2 = st.columns([5, 1])
-                xcol1.write(f"{ex['date']} · {ex['price']:.2f} · {int(ex['shares']):,}주 · {fmt_pct(pct)}" +
-                            (f" · {ex['memo']}" if _has_text(ex.get("memo")) else ""))
+                xcol1.markdown(f"{ex['date']} · {ex['price']:.2f} · {int(ex['shares']):,}주 · "
+                               f"{kr_md(fmt_pct(pct), pct)}" +
+                               (f" · {ex['memo']}" if _has_text(ex.get("memo")) else ""))
                 if xcol2.button("🗑️", key=f"{key_prefix}_exit_del_{ex['id']}", use_container_width=True):
                     delete_exit(ex["id"])
                     st.cache_data.clear()
@@ -403,36 +689,28 @@ with st.sidebar:
             st.caption("⚠️ GitHub 미연동 — 로컬에만 저장되며 정기 스캔 스케줄러와 공유되지 않습니다.")
 
         with st.expander("➕ 신규 포지션 등록"):
-            nj_ticker = st.text_input("종목 티커", placeholder="예: AAPL", key="nj_ticker")
-            nj_date = st.date_input("매매일", value=datetime.now().date(), key="nj_date")
-            nj_price = st.number_input("매수가", min_value=0.0, step=0.01, format="%.2f", key="nj_price")
-            nj_shares = st.number_input("수량", min_value=0, step=1, key="nj_shares")
-            nj_memo = st.text_input("메모 (선택)", placeholder="예: 눌림목 진입", key="nj_memo")
-
-            preview = None
-            if nj_ticker.strip() and nj_price > 0:
-                preview = load_preview(nj_ticker.strip().upper(), nj_date, nj_price)
-                if "error" in preview:
-                    st.warning(preview["error"])
+            _show_flash("flash_new_trade")
+            with st.form("nj_form", clear_on_submit=True, border=False):
+                nj1, nj2 = st.columns(2)
+                nj_ticker = nj1.text_input("종목", placeholder="AAPL")
+                nj_date = nj2.date_input("체결일", value=datetime.now().date(), max_value=datetime.now().date())
+                nj3, nj4 = st.columns(2)
+                nj_price = nj3.number_input("체결가", value=None, min_value=0.0, step=0.01, format="%.2f",
+                                            placeholder="0.00")
+                nj_shares = nj4.number_input("수량", value=None, min_value=0, step=1, placeholder="0")
+                nj_memo = st.text_input("매수 이유 (선택)", placeholder="예: 스크리닝 2위 · 눌림목")
+                nj_submit = st.form_submit_button("➕ 기록 (Enter)", type="primary", use_container_width=True)
+            if nj_submit:
+                if not nj_ticker.strip() or not nj_price or not nj_shares:
+                    st.warning("종목, 체결가, 수량을 입력해 주세요.")
                 else:
-                    st.caption(f"ATR14: {preview['atr14']:.2f} · 손절가: {preview['initial_stop']:.2f} · "
-                               f"TP1: {preview['tp1_price']:.2f} · TP2: {preview['tp2_price']:.2f}")
-                    if preview.get("pending"):
-                        st.info(f"매매일 시세가 아직 집계되지 않아 최근 거래일({preview['atr_as_of']:%Y-%m-%d}) "
-                                "기준 ATR14로 손절가를 계산했습니다. 등록 후 해당 일봉이 생기면 자동으로 추적이 시작됩니다.")
-
-            if st.button("➕ 매매일지에 추가", type="primary", use_container_width=True, key="nj_submit"):
-                if not nj_ticker.strip() or nj_price <= 0 or nj_shares <= 0:
-                    st.warning("종목 티커, 매수가, 수량을 올바르게 입력해 주세요.")
-                elif preview is not None and "error" in preview:
-                    pass  # 위 미리보기에 이미 동일한 오류가 표시되어 있으므로 중복 표시하지 않음
-                else:
-                    result = add_trade(nj_ticker.strip().upper(), nj_date, nj_price, int(nj_shares), nj_memo)
+                    result = add_trade(nj_ticker.strip().upper(), nj_date, float(nj_price), int(nj_shares), nj_memo)
                     if "error" in result:
                         st.error(result["error"])
                     else:
-                        st.cache_data.clear()
-                        st.rerun()
+                        tr = result["trade"]
+                        st.success(f"{tr['ticker']} 기록 완료 — 손절가 {tr['initial_stop']:.2f} · "
+                                   f"TP1 {tr['entry_price'] * (1 + TP1_PCT):.2f} · TP2 {tr['entry_price'] * (1 + TP2_PCT):.2f}")
 
         trades_df = load_trades()
         signals_df = load_signals()
@@ -444,9 +722,9 @@ with st.sidebar:
         closed_trades = active_trades[active_trades["status"] == "CLOSED"] if not active_trades.empty else active_trades
         archived_trades = trades_df[trades_df["archived"]] if not trades_df.empty else trades_df
 
-        with st.expander(f"📜 History ({len(archived_trades)}건)"):
+        with st.expander(f"📜 보관함 ({len(archived_trades)}건)"):
             if archived_trades.empty:
-                st.caption("기록/삭제로 옮긴 포지션이 여기에 표시됩니다.")
+                st.caption("보관한 포지션이 여기에 표시됩니다.")
             else:
                 for _, hrow in archived_trades.iterrows():
                     _render_history_card(hrow, exits_df, key_prefix="side", compact=True)
@@ -562,7 +840,10 @@ if tab_journal.open:
         s1, s2, s3 = st.columns(3)
         s1.metric("총 투자금액(매입원가)", f"${total_cost:,.0f}")
         s2.metric("평가금액", f"${total_value:,.0f}")
-        s3.metric("평가손익", f"${total_pnl:+,.0f}", f"{total_pnl_pct:+.2f}%")
+        _pc = KR_UP if total_pnl > 0 else KR_DOWN if total_pnl < 0 else "inherit"
+        s3.markdown(f"<div style='font-size:13px;opacity:.7'>평가손익</div>"
+                    f"<div style='font-size:22px;font-weight:600;color:{_pc}'>${total_pnl:+,.0f} "
+                    f"<span style='font-size:15px'>({total_pnl_pct:+.2f}%)</span></div>", unsafe_allow_html=True)
 
         sector_alloc = summary_df.groupby("sector")["mkt_value"].sum().sort_values(ascending=False)
         sector_pct = (sector_alloc / total_value * 100) if total_value > 0 else sector_alloc
@@ -575,128 +856,61 @@ if tab_journal.open:
         st.dataframe(alloc_df, use_container_width=True)
         st.divider()
 
+    _show_flash("flash_journal")
     if trades_df.empty:
-        st.info("아직 등록된 포지션이 없습니다. 좌측 사이드바 '📓 매매일지' 탭에서 종목을 등록해 보세요.")
+        st.info("아직 등록된 포지션이 없습니다. 좌측 사이드바 '📓 매매일지' 탭이나 스크리닝 후보 카드의 "
+                "'📝 매수 기록'으로 등록해 보세요.")
     else:
         tab_open, tab_closed, tab_history = st.tabs([
             f"🟢 진행중 ({len(open_trades)})",
             f"⚫ 종료 ({len(closed_trades)})",
-            f"📜 History ({len(archived_trades)})",
+            f"📜 보관함 ({len(archived_trades)})",
         ])
 
         with tab_open:
             if open_trades.empty:
                 st.info("현재 보유(OPEN) 포지션이 없습니다.")
-            for _, trow in open_trades.iterrows():
-                trade_id = trow["id"]
-                ticker = trow["ticker"]
-                pending = signals_df[(signals_df["trade_id"] == trade_id) & (~signals_df["confirmed"])] \
-                    if not signals_df.empty else signals_df
-
-                with st.container(border=True):
-                    phase_emoji = {"STAGE_0": "🟡", "STAGE_1": "🔵", "STAGE_2": "🟢"}.get(trow["phase"], "")
-                    bell = " 🔔" if len(pending) > 0 else ""
-                    hcol1, hcol2 = st.columns([6, 1])
-                    hcol1.markdown(f"### {phase_emoji} [{ticker}]({_stockanalysis_url(ticker)}) · "
-                                    f"{trow['entry_date']} 진입{bell}" +
-                                    (f" · _{trow['memo']}_" if _has_text(trow.get("memo")) else ""))
-                    if hcol2.button("📁 기록/삭제", key=f"main_del_{trade_id}"):
-                        archive_trade(trade_id)
-                        st.cache_data.clear()
-                        st.rerun()
-
-                    metrics = load_dashboard_metrics(ticker, float(trow["entry_price"]), float(trow["initial_stop"]),
-                                                      float(trow["current_stop"]), trow["phase"])
-                    r_text = f" · R배수 {metrics['r_multiple']:+.2f}R" if "error" not in metrics else ""
-                    st.caption(PHASE_LABELS.get(trow["phase"], trow["phase"]) + r_text)
-
-                    m1, m2, m3, m4, m5, c_price, c_shares, c_btn = st.columns([1, 1, 1, 1, 1, 1.1, 1.1, 0.8])
-                    m1.metric("매수가", f"{trow['entry_price']:.2f}")
-                    m2.metric("현재가", f"{metrics['last_close']:.2f}" if "error" not in metrics else "N/A")
-                    m3.metric("손절가", f"{trow['current_stop']:.2f}",
-                              fmt_pct(metrics.get("dist_to_stop_pct")) if "error" not in metrics else None)
-                    if "error" not in metrics and metrics["target_price"] is not None:
-                        m4.metric(f"{metrics['target_label']} 목표가", f"{metrics['target_price']:.2f}",
-                                  fmt_pct(metrics["dist_to_target_pct"]))
-                    else:
-                        m4.metric("목표가", "Runner(MA50)")
-                    m5.metric("잔여 수량", f"{int(trow['remaining_shares']):,} / {int(trow['initial_shares']):,}주")
-                    c_price.number_input("매도가", value=None, min_value=0.0, step=0.01, format="%.2f",
-                                         placeholder="매도가", key=f"sale_price_{trade_id}")
-                    c_shares.number_input("매도수량", value=None, min_value=0, step=1,
-                                          placeholder="수량", key=f"sale_shares_{trade_id}")
-                    c_btn.markdown("<div style='height:1.7rem'></div>", unsafe_allow_html=True)
-                    c_btn.button("💰 매도", key=f"sale_btn_{trade_id}", use_container_width=True,
-                                 on_click=_on_record_sale, args=(trade_id,))
-
-                    sale_msg = st.session_state.pop(f"sale_msg_{trade_id}", None)
-                    if sale_msg:
-                        getattr(st, sale_msg[0])(sale_msg[1])
-
-                    trade_sales = exits_df[exits_df["trade_id"] == trade_id] if not exits_df.empty else exits_df
-                    if not trade_sales.empty:
-                        st.caption("매도 기록")
-                        for _, ex in trade_sales.sort_values("date").iterrows():
-                            pct = (ex["price"] / trow["entry_price"] - 1) * 100 if trow["entry_price"] else None
-                            xcol1, xcol2 = st.columns([6, 1])
-                            xcol1.write(f"{ex['date']} · {ex['price']:.2f} · {int(ex['shares']):,}주 · {fmt_pct(pct)}")
-                            if xcol2.button("↩️ 취소", key=f"sale_undo_{ex['id']}", use_container_width=True):
-                                undo_sale(ex["id"])
-                                st.cache_data.clear()
-                                st.rerun()
-
-                    if "error" in metrics:
-                        st.error(metrics["error"])
-
-                    if len(pending) > 0:
-                        for _, sig in pending.iterrows():
-                            scol1, scol2 = st.columns([4, 1])
-                            scol1.warning(f"🔔 **{SIGNAL_LABELS.get(sig['type'], sig['type'])}** — "
-                                          f"{sig['date']} 종가 {sig['price']:.2f}, 매도 제안 수량 {int(sig['suggested_shares']):,}주")
-                            confirm_label = "✅ 매도 완료 확인" if sig["type"] in EXIT_SIGNAL_TYPES else "✅ 체결 확인"
-                            if scol2.button(confirm_label, key=f"main_confirm_{sig['id']}", use_container_width=True):
-                                confirm_signal(sig["id"])
-                                st.cache_data.clear()
-                                st.rerun()
+            else:
+                _render_pending_signals(open_trades, signals_df)
+                open_tbl = _open_table_rows(open_trades, signals_df)
+                sel_id = _select_table(
+                    _style_open_table(open_tbl), tuple(open_trades["id"]), "open_tbl",
+                    {"종목": _TICKER_LINK, "시그널": st.column_config.TextColumn(width="small")})
+                st.caption("행을 선택하면 아래에 매도 기록·수정·보관이 열립니다. 색상은 한국식(상승 빨강 · 하락 파랑)입니다.")
+                if sel_id is not None:
+                    _render_open_detail(open_trades[open_trades["id"] == sel_id].iloc[0], signals_df, exits_df)
 
         with tab_closed:
             if closed_trades.empty:
                 st.info("종료된 포지션이 없습니다.")
-            if not closed_trades.empty:
-                closed_widths = [1.1, 1.3, 1, 1.3, 1, 1, 1.2, 1.2]
-                for col, label in zip(st.columns(closed_widths),
-                                      ["종목", "매수일", "매수가", "매도일", "매도가", "보유일수", "평가손익률", ""]):
-                    col.markdown(f"**{label}**")
-            for _, trow in closed_trades.iterrows():
-                summary = summarize_closed_trade(trow, exits_df, signals_df)
-                c = st.columns(closed_widths)
-                c[0].markdown(f"[{trow['ticker']}]({_stockanalysis_url(trow['ticker'])})")
-                c[1].write(str(trow["entry_date"]))
-                c[2].write(f"{trow['entry_price']:.2f}")
-                if summary["exit_price"] is None:
-                    c[3].write("-")
-                    c[4].write("-")
-                    c[5].write("-")
-                    c[6].write("-")
-                else:
-                    ret = summary["return_pct"]
-                    c[3].write(str(summary["exit_date"]))
-                    c[4].write(f"{summary['exit_price']:.2f}")
-                    c[5].write(f"{summary['hold_days']}일")
-                    c[6].markdown(f":{'green' if ret >= 0 else 'red'}[{ret:+.2f}%]")
-                if c[7].button("📁 기록/삭제", key=f"main_del_closed_{trow['id']}", use_container_width=True):
-                    archive_trade(trow["id"])
-                    st.cache_data.clear()
-                    st.rerun()
-            if not closed_trades.empty:
-                st.caption("매도일·매도가는 직접 기록한 매도 내역(없으면 체결 확인된 시그널)의 마지막 매도일과 수량 가중 평균가입니다. "
-                           "평가손익률 = 평균 매도가 / 매수가 − 1. 매도 내역이 없으면 '-'로 표시됩니다.")
+            else:
+                closed_tbl, closed_sums = _closed_table_rows(closed_trades, exits_df, signals_df)
+                sel_id = _select_table(
+                    _smap(closed_tbl.style, kr_style, ["손익률(%)", "R배수"])
+                    .format({"매수가": "{:.2f}", "평균 매도가": "{:.2f}", "보유일": "{:.0f}일",
+                             "손익률(%)": "{:+.2f}%", "R배수": "{:+.2f}R"}, na_rep="-"),
+                    tuple(closed_trades["id"]), "closed_tbl", {"종목": _TICKER_LINK})
+                st.caption("매도일·평균 매도가는 기록한 매도 내역(없으면 체결 확인된 시그널)의 마지막 매도일과 수량 가중 평균가입니다. "
+                           "손익률 = 평균 매도가 / 매수가 − 1, R배수 = (평균 매도가 − 매수가) / (매수가 − 초기 손절가). "
+                           "행을 선택하면 매도 내역과 보관 버튼이 열립니다.")
+                if sel_id is not None:
+                    crow = closed_trades[closed_trades["id"] == sel_id].iloc[0]
+                    with st.container(border=True):
+                        st.markdown(f"### ⚫ [{crow['ticker']}]({_stockanalysis_url(crow['ticker'])}) · "
+                                    f"{crow['entry_date']} 매수 · 매수가 {crow['entry_price']:.2f}" +
+                                    (f" · _{crow['memo']}_" if _has_text(crow.get("memo")) else ""))
+                        _render_exit_list(crow, exits_df, f"closed_{sel_id}", allow_undo=False)
+                        if exits_df.empty or exits_df[exits_df["trade_id"] == sel_id].empty:
+                            st.caption("기록된 매도 내역이 없습니다. 보관함의 ➕ 매도에서 추가할 수 있습니다.")
+                        if st.button("📁 보관", key=f"closed_archive_{sel_id}"):
+                            archive_trade(sel_id)
+                            st.rerun()
 
         with tab_history:
-            st.caption("'기록/삭제'로 옮긴 포지션입니다. 시그널 추적 대상에서 제외됩니다. "
-                       "➕ 매도 버튼으로 분할 매도를 포함한 매도 기록을 여러 건 남길 수 있습니다.")
+            st.caption("보관한 포지션입니다. 시그널 추적 대상에서 제외됩니다. "
+                       "➕ 매도 버튼으로 분할 매도를 포함한 매도 기록을 여러 건 남길 수 있고, 복원하면 다시 목록으로 돌아갑니다.")
             if archived_trades.empty:
-                st.info("History에 저장된 포지션이 없습니다.")
+                st.info("보관함이 비어 있습니다.")
             for _, trow in archived_trades.iterrows():
                 _render_history_card(trow, exits_df, key_prefix="main", compact=False)
 
@@ -925,7 +1139,7 @@ if tab_screening.open:
             inv_scores = {t: 1.0 / s for t, s in top_stocks["composite_score"].items() if s and s > 0}
             total_inv = sum(inv_scores.values())
             signal_count = 0
-            for ticker, row in top_stocks.iterrows():
+            for rank_no, (ticker, row) in enumerate(top_stocks.iterrows(), start=1):
                 df = candidates_data[ticker]
                 ind = execution.compute_indicators(df)
                 atr = ind.iloc[-1]["ATR14"]
@@ -953,6 +1167,8 @@ if tab_screening.open:
                     r4.metric("수량", f"{shares:,}주")
                     r5.metric("투입금액", f"${actual_value:,.0f}")
                     r6.metric("MRS", f"{row['mrs']:+.2f}")
+                    _quick_record_popover(ticker, rank_no, float(row["composite_score"]), entry_price, shares,
+                                          regime, ticker_sector_map.get(ticker, "-"))
 
             if signal_count == 0:
                 st.info("오늘은 매수 가능한 후보가 없습니다.")
@@ -1028,8 +1244,9 @@ if tab_screening.open:
                         "exit_signal_type": "실제 전량 청산 시그널"})
                     pct_cols = ["수익률(종가→종료가)", "전략 수익률", "SPY 대비", "최대상승", "최대하락",
                                 "이탈일 시점 수익률"]
-                    st.dataframe(view.style.format({**{c: "{:+.1%}" for c in pct_cols},
-                                                    "편입일 CompositeScore": "{:.1f}"}, na_rep="-"),
+                    st.dataframe(_smap(view.style, kr_style, pct_cols)
+                                 .format({**{c: "{:+.1%}" for c in pct_cols}, "편입일 CompositeScore": "{:.1f}"},
+                                         na_rep="-"),
                                  use_container_width=True, hide_index=True)
                     st.caption("수익률은 편입일(스크리닝 당일) 종가 → 종료가(청산 시그널가, 진행중이면 최신 종가) 기준이고, "
                                "전략 수익률은 TP1·TP2 분할 매도를 30/30/40 비중으로 가중한 값입니다. 손절은 갭을 반영해 "
