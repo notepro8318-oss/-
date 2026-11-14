@@ -56,11 +56,12 @@ TRADE_COLUMNS = [
     "atr14_at_entry", "status", "phase", "last_checked_date", "memo", "archived",
     "mistake_tags", "lesson",   # 복기: 실수 태그(", " 구분), 한 줄 교훈
     "import_key",               # 증권사 거래내역 가져오기로 만든 포지션의 매수 거래 키(중복 가져오기 방지)
+    "entry_fee",                # 매수 수수료(USD, 가져온 포지션만)
 ]
 SIGNAL_COLUMNS = ["id", "trade_id", "ticker", "date", "type", "price", "suggested_shares",
                    "confirmed", "notified", "note"]
 # History에서 수동으로 기록하는 매도 내역 (분할 매도 지원 — 포지션당 여러 건 가능)
-EXIT_COLUMNS = ["id", "trade_id", "date", "price", "shares", "memo", "import_key"]
+EXIT_COLUMNS = ["id", "trade_id", "date", "price", "shares", "memo", "import_key", "fee"]
 
 DISMISSED_MARK = "[체결 안 함]"
 PHASE_LABELS = {
@@ -115,6 +116,7 @@ def load_trades() -> pd.DataFrame:
         for col in ["entry_price", "initial_shares", "remaining_shares",
                     "initial_stop", "current_stop", "atr14_at_entry"]:
             df[col] = pd.to_numeric(df[col])
+        df["entry_fee"] = pd.to_numeric(df["entry_fee"]).fillna(0.0)
         df["archived"] = df["archived"].fillna(False).astype(bool)
         for col in ("asset_name", "mistake_tags", "lesson", "import_key"):   # 빈 칸만 있는 컬럼이 float로 읽히는 것을 막는다
             df[col] = df[col].astype(object).where(df[col].notna(), "")
@@ -147,6 +149,7 @@ def load_exits() -> pd.DataFrame:
         df["date"] = pd.to_datetime(df["date"]).dt.date
         df["price"] = pd.to_numeric(df["price"])
         df["shares"] = pd.to_numeric(df["shares"]).astype(int)
+        df["fee"] = pd.to_numeric(df["fee"]).fillna(0.0)
         df["import_key"] = df["import_key"].astype(object).where(df["import_key"].notna(), "")
     return df
 
@@ -433,6 +436,7 @@ def add_trade(ticker: str, entry_date, entry_price: float, shares: int,
         "mistake_tags": "",
         "lesson": "",
         "import_key": "",
+        "entry_fee": 0.0,
     }
     new_df = pd.DataFrame([new_row])
     trades_df = new_df if trades_df.empty else pd.concat([trades_df, new_df], ignore_index=True)

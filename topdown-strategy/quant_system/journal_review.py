@@ -83,6 +83,16 @@ def _sold_shares(trade_id, exits_df, signals_df) -> int:
     return 0
 
 
+def _fees(trade, exits_df, sold: int) -> float:
+    """실현된 부분에 해당하는 수수료·세금(USD): 매수 수수료는 판 수량 비율만큼 + 매도 수수료 합."""
+    initial = int(trade["initial_shares"]) or 1
+    entry_fee = float(trade.get("entry_fee", 0) or 0) * min(sold, initial) / initial
+    exit_fee = 0.0
+    if exits_df is not None and not exits_df.empty and "fee" in exits_df.columns:
+        exit_fee = float(exits_df[exits_df["trade_id"] == trade["id"]]["fee"].sum())
+    return entry_fee + exit_fee
+
+
 def trade_results(trades_df: pd.DataFrame, exits_df: pd.DataFrame, signals_df: pd.DataFrame) -> pd.DataFrame:
     """포지션별 결과. 매도 내역이 없는 포지션은 손익 NaN."""
     rows = []
@@ -93,6 +103,7 @@ def trade_results(trades_df: pd.DataFrame, exits_df: pd.DataFrame, signals_df: p
         have = sm["exit_price"] is not None
         sold = _sold_shares(t["id"], exits_df, signals_df) if have else 0
         adh = adherence(t, exits_df, signals_df)
+        fees = _fees(t, exits_df, sold)
         rows.append({
             "id": t["id"], "ticker": t["ticker"], "entry_date": t["entry_date"], "entry_price": entry,
             "shares": int(t["initial_shares"]), "exit_date": sm["exit_date"] if have else None,
@@ -101,6 +112,8 @@ def trade_results(trades_df: pd.DataFrame, exits_df: pd.DataFrame, signals_df: p
             "return_pct": sm["return_pct"] if have else np.nan,
             "r_multiple": (sm["exit_price"] - entry) / risk if have and risk > 0 else np.nan,
             "pnl": (sm["exit_price"] - entry) * sold if have else np.nan,
+            "fees": fees if have else np.nan,
+            "net_pnl": ((sm["exit_price"] - entry) * sold - fees) if have else np.nan,
             "adherence": adh["verdict"], "adherence_detail": adh["detail"],
             "tags": ", ".join(split_tags(t.get("mistake_tags"))), "lesson": _txt(t.get("lesson")),
             "memo": _txt(t.get("memo")),
@@ -126,6 +139,7 @@ def performance(results: pd.DataFrame) -> dict:
         "expectancy_pct": r["return_pct"].mean(),
         "profit_factor": (gross_win / gross_loss) if gross_loss > 0 else np.nan,
         "realized_pnl": r["pnl"].sum(), "avg_hold_days": r["hold_days"].mean(),
+        "fees": r["fees"].sum(), "net_pnl": r["net_pnl"].sum(),
         "best": r.loc[r["return_pct"].idxmax(), "ticker"], "worst": r.loc[r["return_pct"].idxmin(), "ticker"],
     }
 
@@ -160,6 +174,22 @@ def tag_stats(results: pd.DataFrame) -> pd.DataFrame:
     return out.reset_index().sort_values("건수", ascending=False).reset_index(drop=True)
 
 
+def dividend_summary(div_df: pd.DataFrame) -> dict:
+    """배당 집계: 전체 합계, 월별, 종목별 (USD)."""
+    if div_df is None or div_df.empty:
+        return {"gross": 0.0, "tax": 0.0, "net": 0.0, "monthly": pd.DataFrame(columns=["월", "세전", "세금", "세후"]),
+                "by_ticker": pd.DataFrame(columns=["종목", "횟수", "세전", "세금", "세후"])}
+    d = div_df.copy()
+    d["월"] = pd.to_datetime(d["date"]).dt.strftime("%Y-%m")
+    d["종목"] = d["ticker"].where(d["ticker"].astype(str) != "", d["name"])
+    monthly = (d.groupby("월").agg(세전=("gross", "sum"), 세금=("tax", "sum"), 세후=("net", "sum")).reset_index()
+               .sort_values("월", ascending=False).reset_index(drop=True))
+    by_t = (d.groupby("종목").agg(횟수=("net", "size"), 세전=("gross", "sum"), 세금=("tax", "sum"), 세후=("net", "sum"))
+            .reset_index().sort_values("세후", ascending=False).reset_index(drop=True))
+    return {"gross": float(d["gross"].sum()), "tax": float(d["tax"].sum()), "net": float(d["net"].sum()),
+            "monthly": monthly, "by_ticker": by_t}
+
+
 def adherence_stats(results: pd.DataFrame) -> pd.DataFrame:
     """규칙 준수 여부별 건수와 평균 R — 규칙을 지킨 거래와 어긴 거래의 성과 차이를 본다."""
     cols = ["규칙 준수", "건수", "평균 R", "평균 손익률(%)"]
@@ -172,7 +202,8 @@ def adherence_stats(results: pd.DataFrame) -> pd.DataFrame:
               .reset_index(drop=True)
 
 
-def build_excel(trades_df: pd.DataFrame, exits_df: pd.DataFrame, signals_df: pd.DataFrame) -> bytes:
+def build_excel(trades_df: pd.DataFrame, exits_df: pd.DataFrame, signals_df: pd.DataFrame,
+                dividends_df: pd.DataFrame | None = None) -> bytes:
     """거래내역 / 분할 매도 / 월별 손익 / 복기 요약 엑셀 (한국식 색: 수익 빨강, 손실 파랑)."""
     res = trade_results(trades_df, exits_df, signals_df) if not trades_df.empty else pd.DataFrame()
     status = trades_df.set_index("id")["status"] if not trades_df.empty else pd.Series(dtype=str)
@@ -201,12 +232,14 @@ def build_excel(trades_df: pd.DataFrame, exits_df: pd.DataFrame, signals_df: pd.
             t = t.rename(columns={"ticker": "종목", "entry_date": "매수일", "entry_price": "매수가", "shares": "수량",
                                   "exit_date": "마지막 매도일", "exit_price": "평균 매도가", "hold_days": "보유일",
                                   "return_pct": "손익률(%)", "r_multiple": "R배수", "pnl": "실현손익(USD)",
+                                  "fees": "수수료·세금(USD)", "net_pnl": "수수료 반영 손익(USD)",
                                   "adherence": "규칙 준수", "adherence_detail": "시그널 이행 상세",
                                   "tags": "실수 태그", "lesson": "교훈", "memo": "매수 이유"})
             t = t[["종목", "상태", "매수일", "매수가", "수량", "마지막 매도일", "평균 매도가", "보유일", "손익률(%)",
-                   "R배수", "실현손익(USD)", "규칙 준수", "시그널 이행 상세", "실수 태그", "교훈", "매수 이유"]]
+                   "R배수", "실현손익(USD)", "수수료·세금(USD)", "수수료 반영 손익(USD)", "규칙 준수", "시그널 이행 상세", "실수 태그", "교훈", "매수 이유"]]
             put(t, "거래내역", {"시그널 이행 상세": 34, "교훈": 36, "매수 이유": 30, "실수 태그": 20},
-                {"매수가": px, "평균 매도가": px, "손익률(%)": pct, "R배수": rfmt, "실현손익(USD)": money})
+                {"매수가": px, "평균 매도가": px, "손익률(%)": pct, "R배수": rfmt, "실현손익(USD)": money,
+                 "수수료·세금(USD)": px, "수수료 반영 손익(USD)": money})
         else:
             pd.DataFrame({"안내": ["등록된 포지션이 없습니다."]}).to_excel(xw, sheet_name="거래내역", index=False)
 
@@ -222,6 +255,23 @@ def build_excel(trades_df: pd.DataFrame, exits_df: pd.DataFrame, signals_df: pd.
                 "분할 매도", {"메모": 30}, {"매도가": px, "손익률(%)": pct, "실현손익(USD)": money})
         put(monthly_realized(trades_df, exits_df), "월별 손익", {}, {"실현손익": money})
 
+        ds = dividend_summary(dividends_df)
+        if dividends_df is not None and not dividends_df.empty:
+            dd = dividends_df.rename(columns={"date": "지급일", "name": "종목명", "ticker": "티커", "gross": "세전(USD)",
+                                              "tax": "세금(USD)", "net": "세후(USD)"})
+            put(dd[["지급일", "티커", "종목명", "세전(USD)", "세금(USD)", "세후(USD)"]].sort_values("지급일"),
+                "배당", {"종목명": 32}, {"세전(USD)": px, "세금(USD)": px, "세후(USD)": px})
+            ws_d = xw.sheets["배당"]
+            r0 = len(dd) + 3
+            for title, df_, c0 in (("월별", ds["monthly"], 0), ("종목별", ds["by_ticker"], 0)):
+                ws_d.write(r0, c0, title, hdr)
+                for c, col in enumerate(df_.columns):
+                    ws_d.write(r0 + 1, c, col, hdr)
+                for i, rec in enumerate(df_.itertuples(index=False), start=r0 + 2):
+                    for c, v in enumerate(rec):
+                        ws_d.write(i, c, round(float(v), 2) if isinstance(v, float) else v)
+                r0 += len(df_) + 3
+
         perf = performance(res) if not res.empty else {"n": 0}
         lines = [("종료 거래 수", perf.get("n", 0))]
         if perf.get("n"):
@@ -230,7 +280,11 @@ def build_excel(trades_df: pd.DataFrame, exits_df: pd.DataFrame, signals_df: pd.
             lines += [("승률", f"{perf['win_rate']:.0%}"), ("평균 수익(%)", rnd(perf["avg_win_pct"])),
                       ("평균 손실(%)", rnd(perf["avg_loss_pct"])), ("손익비", rnd(perf["payoff"])),
                       ("평균 R", rnd(perf["avg_r"])), ("프로핏 팩터", rnd(perf["profit_factor"])),
-                      ("실현손익 합계(USD)", rnd(perf["realized_pnl"])), ("평균 보유일", rnd(perf["avg_hold_days"], 1))]
+                      ("실현손익 합계(USD)", rnd(perf["realized_pnl"])),
+                      ("수수료·세금 합계(USD)", rnd(perf["fees"])), ("수수료 반영 손익(USD)", rnd(perf["net_pnl"])),
+                      ("평균 보유일", rnd(perf["avg_hold_days"], 1))]
+            if ds["net"]:
+                lines += [("배당금 세전(USD)", rnd(ds["gross"])), ("배당금 세후(USD)", rnd(ds["net"]))]
         summ = pd.DataFrame(lines, columns=["지표", "값"])
         put(summ, "복기 요약", {"지표": 22, "값": 16}, {})
         ws = xw.sheets["복기 요약"]

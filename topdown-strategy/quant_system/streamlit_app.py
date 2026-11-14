@@ -527,8 +527,9 @@ def _render_broker_import(trades_df) -> None:
     """증권사 '미국주식 거래내역' 엑셀을 올리면 미리보기를 보여 주고, 확인하면 매매일지에 반영한다."""
     with st.expander("📤 증권사 거래내역 가져오기 (엑셀 업로드)"):
         st.caption("'미국주식 거래내역' 엑셀을 올리면 개별주의 매수·매도를 일지에 반영합니다. 매수 1건이 포지션 1건이 되고 "
-                   "매도는 선입선출로 연결되어 분할 매도로 기록됩니다. 같은 파일을 다시 올려도 이미 반영한 거래는 건너뛰고 "
-                   "새 거래만 추가합니다. ETF, 매수 기록이 없는 종목의 매도, 입출금·배당·수수료는 가져오지 않으며 "
+                   "매도는 선입선출로 연결되어 분할 매도로 기록되며, 거래 수수료·세금도 함께 저장합니다. 배당금은 따로 집계하고 "
+                   "ETF 거래는 시그널 없이 '장기 보유 ETF' 현황에만 씁니다. 같은 파일을 다시 올려도 이미 반영한 거래는 "
+                   "건너뛰고 새 거래만 추가합니다. 매수 기록이 없는 종목의 매도, 입출금은 가져오지 않으며 "
                    "이체 내역의 이름·계좌번호는 읽지 않습니다.")
         up = st.file_uploader("거래내역 엑셀 (.xlsx)", type=["xlsx"], key="broker_upload")
         if up is None:
@@ -560,14 +561,22 @@ def _render_broker_import(trades_df) -> None:
                     st.rerun()
 
         with st.spinner("시세로 체결일·손절가를 계산하는 중..."):
-            plan = broker_import.build_plan(parsed, load_trades(), load_exits(), load_signals(), name_map, _import_prices)
-        sm = plan["summary"] if "summary" in plan else {"new_lots": 0, "replaced": 0, "existing": 0, "new_sells": 0, "to_apply": 0}
+            plan = broker_import.build_plan(parsed, load_trades(), load_exits(), load_signals(), name_map, _import_prices,
+                                            dividends=info["dividends"])
+        sm = plan["summary"] if "summary" in plan else {"new_lots": 0, "replaced": 0, "existing": 0, "new_sells": 0,
+                                                          "to_apply": 0, "dividends": 0, "etf_rows": 0, "fee_updates": 0,
+                                                          "to_apply_total": 0}
         st.caption(f"파일 기간 {info['start']} ~ {info['end']} · 전체 {info['rows_total']}행 중 매수·매도 {info['rows_trade']}행")
         k = st.columns(4)
         k[0].metric("새 포지션", f"{sm['new_lots']}건")
         k[1].metric("수동 기록 교체", f"{sm['replaced']}건")
         k[2].metric("추가될 매도", f"{sm['new_sells']}건")
         k[3].metric("이미 반영됨", f"{sm['existing']}건")
+        k2 = st.columns(3)
+        k2[0].metric("새 배당금", f"{sm['dividends']}건")
+        k2[1].metric("ETF 거래(보유 현황용)", f"{sm['etf_rows']}건")
+        k2[2].metric("수수료 보강", f"{sm['fee_updates']}건",
+                     help="수수료 항목이 생기기 전에 가져온 포지션·매도 기록에 파일의 수수료·세금을 채웁니다.")
 
         rows = []
         for l in plan["lots"]:
@@ -579,11 +588,12 @@ def _render_broker_import(trades_df) -> None:
                          "상태": "진행중" if l["remaining"] > 0 else "종료", "처리": _IMPORT_MODE_LABEL[l["mode"]]})
         if rows:
             st.dataframe(pd.DataFrame(rows).style.format({"매수가": "{:.2f}"}), hide_index=True, use_container_width=True)
-        else:
+        elif sm["to_apply_total"] == 0:
             st.success("반영할 새 거래가 없습니다. 이미 모두 가져온 파일입니다.")
 
         if plan["excluded_etf"]:
-            st.caption("제외한 ETF: " + ", ".join(f"{n} {c}건" for n, c in plan["excluded_etf"].items()))
+            st.caption("ETF는 시그널 없이 '장기 보유 ETF' 현황에만 반영합니다: " +
+                       ", ".join(f"{n} {c}건" for n, c in plan["excluded_etf"].items()))
         if plan["dropped_sells"]:
             st.caption("제외한 매도(파일에 매수 기록이 없는 수량): " + ", ".join(
                 f"{d['ticker']} {d['date']} {d['qty']}주" for d in plan["dropped_sells"]))
@@ -599,7 +609,8 @@ def _render_broker_import(trades_df) -> None:
             st.info("수동 기록 교체: 같은 종목·비슷한 가격(±2%)의 기존 수동 기록을 실제 체결로 바꿉니다. "
                     "매수 이유 메모와 복기 내용은 옮겨지고, 기존에 기록한 매도 내역은 파일의 매도로 대체됩니다.")
 
-        if st.button(f"✅ 일지에 반영 ({sm['to_apply']}건)", type="primary", disabled=sm["to_apply"] == 0, key="bi_apply"):
+        if st.button(f"✅ 일지에 반영 ({sm['to_apply_total']}건)", type="primary", disabled=sm["to_apply_total"] == 0,
+                     key="bi_apply"):
             with st.spinner("일지에 반영하는 중..."):
                 res = broker_import.apply_plan(plan, extra_map=extra)
             load_dashboard_metrics.clear()
@@ -607,8 +618,50 @@ def _render_broker_import(trades_df) -> None:
                 _flash("flash_journal", "warning", "일부 오류: " + " / ".join(res["errors"]))
             else:
                 _flash("flash_journal", "success",
-                       f"가져오기 완료 — 새 포지션 {res['created']}건, 수동 기록 교체 {res['replaced']}건, 매도 {res['exits_added']}건 추가.")
+                       f"가져오기 완료 — 새 포지션 {res['created']}건, 수동 기록 교체 {res['replaced']}건, 매도 {res['exits_added']}건, "
+                       f"배당 {res['dividends_added']}건, ETF 거래 {res['etf_added']}건 추가, 수수료 보강 {res['fee_updates']}건.")
             st.rerun()
+
+
+@st.cache_data(ttl=CACHE_TTL, show_spinner=False)
+def _last_close(ticker: str) -> float:
+    df = fetch_ohlcv(ticker, period="5d")
+    return float(df["Close"].iloc[-1]) if not df.empty else float("nan")
+
+
+def _render_dividends_and_etf() -> None:
+    """가져온 배당금 집계와 장기 보유 ETF 현황(시그널 없음)."""
+    div_df = broker_import.load_dividends()
+    etf_df = broker_import.load_etf_trades()
+    if div_df.empty and etf_df.empty:
+        return
+    held = broker_import.etf_holdings(etf_df)
+    with st.expander(f"🏦 장기 보유 ETF · 💵 배당금 (보유 ETF {len(held)}종 · 배당 {len(div_df)}건)"):
+        if not held.empty:
+            st.markdown("**🏦 장기 보유 ETF** — 손절·익절 시그널과 알림 없이 보유 현황만 표시합니다.")
+            dsum_t = jr.dividend_summary(div_df)["by_ticker"].set_index("종목")["세후"] if not div_df.empty else pd.Series(dtype=float)
+            rows = []
+            for _, h in held.iterrows():
+                px = _last_close(h["ticker"])
+                value = px * h["qty"]
+                pnl = (value / h["cost"] - 1) * 100 if h["cost_complete"] and h["cost"] else float("nan")
+                rows.append({"종목": h["ticker"], "수량": h["qty"], "평균단가": h["avg_cost"], "현재가": px, "평가금액": value,
+                             "평가손익(%)": pnl, "누적 배당(세후)": float(dsum_t.get(h["ticker"], 0.0))})
+            tbl = pd.DataFrame(rows)
+            st.dataframe(_smap(tbl.style, kr_style, ["평가손익(%)"]).format(
+                {"수량": "{:,.0f}", "평균단가": "{:.2f}", "현재가": "{:.2f}", "평가금액": "${:,.0f}", "평가손익(%)": "{:+.2f}%",
+                 "누적 배당(세후)": "${:,.2f}"}, na_rep="-"), hide_index=True, use_container_width=True)
+            st.caption(f"평가금액 합계 \\${tbl['평가금액'].sum():,.0f}. 평균단가는 파일의 매수 내역 기준 이동평균(수수료 포함)이며, "
+                       "파일 이전부터 보유한 수량이 있으면 '-'로 표시됩니다.")
+        if not div_df.empty:
+            ds = jr.dividend_summary(div_df)
+            st.markdown(f"**💵 배당금** — 세전 \\${ds['gross']:,.2f} · 세금 \\${ds['tax']:,.2f} · **세후 \\${ds['net']:,.2f}**")
+            c1, c2 = st.columns(2)
+            c1.dataframe(ds["monthly"].style.format({"세전": "{:.2f}", "세금": "{:.2f}", "세후": "{:.2f}"}),
+                         hide_index=True, use_container_width=True)
+            c2.dataframe(ds["by_ticker"].style.format({"세전": "{:.2f}", "세금": "{:.2f}", "세후": "{:.2f}"}),
+                         hide_index=True, use_container_width=True)
+            st.caption("세금 = 외화 원천징수 + 원화로 낸 배당세금(그날 환율로 환산). 포지션 손익에는 합산하지 않습니다.")
 
 
 def _closed_table_rows(res: pd.DataFrame) -> pd.DataFrame:
@@ -623,7 +676,7 @@ def _closed_table_rows(res: pd.DataFrame) -> pd.DataFrame:
     })
 
 
-def _render_perf_summary(res: pd.DataFrame, trades_all, exits_df) -> None:
+def _render_perf_summary(res: pd.DataFrame, trades_all, exits_df, div_df=None) -> None:
     """종료 탭 상단: 성과 지표 + 월별 손익/규칙 준수/실수 태그 분석."""
     perf = jr.performance(res)
     if perf["n"] == 0:
@@ -640,6 +693,11 @@ def _render_perf_summary(res: pd.DataFrame, trades_all, exits_df) -> None:
     k[4].metric("PF", "-" if pd.isna(perf["profit_factor"]) else f"{perf['profit_factor']:.2f}",
                 help="프로핏 팩터 = 총이익 / 총손실. 1보다 커야 이익입니다.")
     k[5].metric("실현손익", f"${perf['realized_pnl']:+,.0f}", help="종료 포지션의 (평균 매도가 − 매수가) × 매도 수량 합계. 수수료·환율 제외.")
+    dsum = jr.dividend_summary(div_df)
+    extra = [f"수수료·세금 −\\${perf['fees']:,.2f} → 수수료 반영 실현손익 \\${perf['net_pnl']:+,.0f}"]
+    if dsum["net"]:
+        extra.append(f"배당금 세후 +\\${dsum['net']:,.0f}")
+    st.caption(" · ".join(extra) + " (R배수·손익률은 수수료 제외 가격 기준)")
     with st.expander("📊 월별 손익 · 규칙 준수별 · 실수 태그별 분석"):
         monthly = jr.monthly_realized(trades_all, exits_df)
         c1, c2 = st.columns(2)
@@ -1011,6 +1069,7 @@ if tab_journal.open:
 
     _show_flash("flash_journal")
     _render_broker_import(trades_df)
+    _render_dividends_and_etf()
     if trades_df.empty:
         st.info("아직 등록된 포지션이 없습니다. 좌측 사이드바 '📓 매매일지' 탭이나 스크리닝 후보 카드의 "
                 "'📝 매수 기록'으로 등록해 보세요.")
@@ -1039,11 +1098,12 @@ if tab_journal.open:
                 st.info("종료된 포지션이 없습니다.")
             else:
                 closed_res = jr.trade_results(closed_trades, exits_df, signals_df)
-                _render_perf_summary(closed_res, trades_df, exits_df)
+                div_df = broker_import.load_dividends()
+                _render_perf_summary(closed_res, trades_df, exits_df, div_df)
                 try:
-                    xl_bytes = jr.build_excel(trades_df, exits_df, signals_df)
+                    xl_bytes = jr.build_excel(trades_df, exits_df, signals_df, div_df)
                     st.download_button(
-                        "📥 매매일지 엑셀 다운로드 (거래내역 · 분할 매도 · 월별 손익 · 복기 요약)",
+                        "📥 매매일지 엑셀 다운로드 (거래내역 · 분할 매도 · 월별 손익 · 배당 · 복기 요약)",
                         data=xl_bytes, file_name=f"trade_journal_{datetime.now():%Y%m%d}.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                         use_container_width=True)

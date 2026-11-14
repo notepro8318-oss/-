@@ -9,7 +9,8 @@
 - 매수 기록이 없는 수량의 매도(1월 이전부터 보유하던 종목)는 가져오지 않는다.
 - 거래 키(거래일자#거래번호)를 저장해 같은 파일을 다시 올려도 중복되지 않고 새 거래만 추가된다.
 - 이미 수동으로 넣은 포지션은 같은 종목·비슷한 가격이면 실제 체결로 교체한다(메모·복기 유지).
-- 수수료·세금·배당은 반영하지 않는다.
+- 거래 수수료·제세금은 포지션(매수)·매도 기록에 저장하고, 배당금(세전/세금/세후)은 따로 저장한다.
+- ETF 거래는 시그널 없이 '장기 보유 ETF' 현황(수량·평균단가)용으로만 저장한다.
 """
 from __future__ import annotations
 
@@ -25,6 +26,13 @@ from journal import TRADE_COLUMNS, EXIT_SIGNAL_TYPES
 
 BUY_KIND, SELL_KIND = "해외주식매수입고", "해외주식매도출고"
 REQUIRED_COLUMNS = ["거래일자", "거래번호", "거래종류", "종목명", "수량", "단가", "외화유가증권"]
+DIV_KIND, DIV_TAX_KIND = "배당금외화입금", "배당세금출금"
+DIV_COLUMNS = ["id", "import_key", "date", "name", "ticker", "kind", "gross", "tax", "net"]
+DIV_REPO_PATH = "topdown-strategy/quant_system/trade_dividends.csv"
+DIV_LOCAL_PATH = os.path.join(jn._LOCAL_DIR, "trade_dividends.csv")
+ETF_COLUMNS = ["import_key", "date", "ticker", "name", "side", "qty", "price", "fee", "balance"]
+ETF_REPO_PATH = "topdown-strategy/quant_system/etf_trades.csv"
+ETF_LOCAL_PATH = os.path.join(jn._LOCAL_DIR, "etf_trades.csv")
 NAME_ALIASES = {"마벨 테크놀로지 그룹": "마블 테크놀로지 그룹"}   # 같은 종목이 두 가지 표기로 나옴
 PRICE_MATCH_TOL = 0.02        # 수동 기록과 같은 거래로 볼 가격 허용 오차
 EXACT_PRICE_TOL = 1e-4        # 이 안이면 시그널 이력까지 그대로 이어받는다
@@ -97,10 +105,40 @@ def parse_statement(source) -> tuple[pd.DataFrame, dict]:
         "side": t["거래종류"].map({BUY_KIND: "BUY", SELL_KIND: "SELL"}),
         "name": t["종목명"].map(norm_name), "qty": pd.to_numeric(t["수량"]),
         "price": pd.to_numeric(t["단가"]), "balance": pd.to_numeric(t["외화유가증권"]),
+        "fee": (pd.to_numeric(t.get("수수료"), errors="coerce").fillna(0)
+                + pd.to_numeric(t.get("제세금합"), errors="coerce").fillna(0)).round(4),
     }).sort_values(["date", "no"]).reset_index(drop=True)
-    info = {"rows_total": n_all, "rows_trade": len(out),
+    info = {"rows_total": n_all, "rows_trade": len(out), "dividends": _parse_dividends(raw),
             "start": raw["_day"].min().date() if n_all else None, "end": raw["_day"].max().date() if n_all else None}
     return out, info
+
+
+def _num(v) -> float:
+    x = pd.to_numeric(v, errors="coerce")
+    return 0.0 if pd.isna(x) else float(x)
+
+
+def _parse_dividends(raw: pd.DataFrame) -> pd.DataFrame:
+    """배당금 입금 행 → 세전(gross)/세금(tax)/세후(net) (USD).
+    세금 = 외화로 떼인 제세금·수수료 + 같은 날 같은 종목의 '배당세금출금'(원화)을 그날 환율로 환산한 값."""
+    cols = ["key", "date", "name", "gross", "tax", "net"]
+    d = raw[raw["거래종류"] == DIV_KIND].dropna(subset=["_day"])
+    if d.empty:
+        return pd.DataFrame(columns=cols)
+    tax_krw = raw[raw["거래종류"] == DIV_TAX_KIND].copy()
+    tax_krw["_n"] = tax_krw["종목명"].map(norm_name)
+    rows = []
+    for _, r in d.iterrows():
+        name, day = norm_name(r["종목명"]), r["_day"]
+        gross = _num(r["외화거래금액"])
+        tax = _num(r["제세금합"]) + _num(r["수수료"])
+        fx = _num(r["단가"])
+        same = tax_krw[(tax_krw["_day"] == day) & (tax_krw["_n"] == name)]
+        if fx > 0 and not same.empty:
+            tax += sum(_num(v) for v in same["거래금액"]) / fx
+        rows.append({"key": f"{day:%Y-%m-%d}#{int(r['거래번호'])}", "date": day.date(), "name": name,
+                     "gross": round(gross, 4), "tax": round(tax, 4), "net": round(gross - tax, 4)})
+    return pd.DataFrame(rows, columns=cols).sort_values(["date", "key"]).reset_index(drop=True)
 
 
 # ------------------------------------------------------------------
@@ -133,7 +171,7 @@ def _fifo(rows: pd.DataFrame) -> tuple[list, list]:
     for r in rows.itertuples():
         if r.side == "BUY":
             lots.append({"key": r.key, "date_kr": r.date, "price": float(r.price), "qty": int(r.qty), "left": int(r.qty),
-                         "sells": []})
+                         "entry_fee": float(r.fee), "sells": []})
             continue
         need = int(r.qty)
         for lot in lots:
@@ -142,7 +180,7 @@ def _fifo(rows: pd.DataFrame) -> tuple[list, list]:
             take = min(lot["left"], need)
             if take > 0:
                 lot["sells"].append({"key": f"{r.key}>{lot['key']}", "date_kr": r.date, "price": float(r.price),
-                                     "shares": take})
+                                     "shares": take, "fee": round(float(r.fee) * take / float(r.qty), 4)})
                 lot["left"] -= take
                 need -= take
         if need > 0:
@@ -169,10 +207,15 @@ def _validate_balances(rows: pd.DataFrame) -> list:
 
 
 def build_plan(parsed: pd.DataFrame, trades_df: pd.DataFrame, exits_df: pd.DataFrame, signals_df: pd.DataFrame,
-               name_map: dict, get_df) -> dict:
-    """미리보기용 계획. get_df(ticker) → 일봉 DataFrame(실패 시 빈 DataFrame). 아무것도 쓰지 않는다."""
+               name_map: dict, get_df, dividends: pd.DataFrame | None = None,
+               dividends_have: set | None = None, etf_have: set | None = None) -> dict:
+    """미리보기용 계획. get_df(ticker) → 일봉 DataFrame(실패 시 빈 DataFrame). 아무것도 쓰지 않는다.
+    dividends: parse_statement가 준 info['dividends']. *_have는 이미 저장된 거래 키(테스트용으로 주입 가능)."""
+    info_dividends = dividends
+    parsed_all = parsed
     plan = {"lots": [], "unmapped": [], "excluded_etf": {}, "dropped_sells": [], "fractional": [],
-            "balance_warnings": [], "kept_manual": [], "period": (None, None)}
+            "balance_warnings": [], "kept_manual": [], "period": (None, None),
+            "fee_updates": {"trades": [], "exits": []}, "dividends_new": pd.DataFrame(), "etf_new": pd.DataFrame()}
     if parsed.empty:
         return plan
     plan["period"] = (parsed["date"].min(), parsed["date"].max())
@@ -191,11 +234,13 @@ def build_plan(parsed: pd.DataFrame, trades_df: pd.DataFrame, exits_df: pd.DataF
 
     existing = {}      # 매수 거래 키 → 이미 가져온 포지션
     existing_exit_keys: set = set()
+    existing_exit_fee: dict = {}
     if not trades_df.empty:
         for _, t in trades_df[trades_df["import_key"].astype(str) != ""].iterrows():
             existing[t["import_key"]] = t
     if exits_df is not None and not exits_df.empty:
         existing_exit_keys = set(exits_df["import_key"].astype(str)) - {""}
+        existing_exit_fee = dict(zip(exits_df["import_key"].astype(str), exits_df["fee"]))
 
     manual = pd.DataFrame()
     if not trades_df.empty:
@@ -224,6 +269,12 @@ def build_plan(parsed: pd.DataFrame, trades_df: pd.DataFrame, exits_df: pd.DataF
         if old is not None:
             lot.update(mode="exists", trade_id=old["id"], matched=None)
             lot["new_sells"] = [s for s in lot["sells"] if s["key"] not in existing_exit_keys]
+            # 수수료 열이 생기기 전에 가져온 기록은 파일 값으로 보강한다
+            if abs(float(old["entry_fee"]) - lot["entry_fee"]) > 0.005:
+                plan["fee_updates"]["trades"].append((old["id"], lot["entry_fee"]))
+            for s_ in lot["sells"]:
+                if s_["key"] in existing_exit_keys and abs(float(existing_exit_fee.get(s_["key"], 0)) - s_["fee"]) > 0.005:
+                    plan["fee_updates"]["exits"].append((s_["key"], s_["fee"]))
         else:
             lot["new_sells"] = lot["sells"]
             lot.update(mode="new", trade_id=None, matched=None)
@@ -249,14 +300,85 @@ def build_plan(parsed: pd.DataFrame, trades_df: pd.DataFrame, exits_df: pd.DataF
                 plan["kept_manual"].append({"id": m["id"], "ticker": m["ticker"], "date": m["entry_date"],
                                             "price": float(m["entry_price"]), "shares": int(m["initial_shares"]),
                                             "status": m["status"]})
+    # 배당금: 이미 저장된 거래 키는 건너뛰고 새 것만. 종목명 → 티커(모르면 빈 값)
+    divs = info_dividends if info_dividends is not None else pd.DataFrame()
+    if not divs.empty:
+        have = set(load_dividends()["import_key"]) if dividends_have is None else dividends_have
+        new = divs[~divs["key"].isin(have)].copy()
+        new["ticker"] = new["name"].map(lambda n: name_map.get(n, {}).get("ticker", ""))
+        new["kind"] = new["name"].map(lambda n: name_map.get(n, {}).get("kind", ""))
+        plan["dividends_new"] = new
+    # ETF 거래(시그널 없는 장기 보유 현황용): 새 거래만
+    etf = parsed_all[parsed_all["name"].map(lambda n: name_map.get(n, {}).get("kind") == "ETF")].copy()
+    if not etf.empty:
+        have = set(load_etf_trades()["import_key"]) if etf_have is None else etf_have
+        etf = etf[~etf["key"].isin(have)]
+        etf["ticker"] = etf["name"].map(lambda n: name_map[n]["ticker"])
+        plan["etf_new"] = etf
     plan["summary"] = {
         "new_lots": sum(1 for l in plan["lots"] if l["mode"] == "new"),
         "replaced": sum(1 for l in plan["lots"] if l["mode"] in ("update", "replace")),
         "existing": sum(1 for l in plan["lots"] if l["mode"] == "exists"),
         "new_sells": sum(len(l["new_sells"]) for l in plan["lots"]),
         "to_apply": sum(1 for l in plan["lots"] if l["mode"] != "exists" or l["new_sells"]),
+        "dividends": len(plan["dividends_new"]), "etf_rows": len(plan["etf_new"]),
+        "fee_updates": len(plan["fee_updates"]["trades"]) + len(plan["fee_updates"]["exits"]),
     }
+    plan["summary"]["to_apply_total"] = (plan["summary"]["to_apply"] + plan["summary"]["dividends"]
+                                         + plan["summary"]["etf_rows"] + plan["summary"]["fee_updates"])
     return plan
+
+
+# ------------------------------------------------------------------
+# 배당 / ETF 저장소
+# ------------------------------------------------------------------
+def load_dividends() -> pd.DataFrame:
+    df = jn._read_df(DIV_REPO_PATH, DIV_LOCAL_PATH, DIV_COLUMNS)
+    if not df.empty:
+        df["date"] = pd.to_datetime(df["date"]).dt.date
+        for c in ("gross", "tax", "net"):
+            df[c] = pd.to_numeric(df[c]).fillna(0.0)
+        for c in ("import_key", "ticker", "kind", "name"):
+            df[c] = df[c].astype(object).where(df[c].notna(), "")
+    return df
+
+
+def load_etf_trades() -> pd.DataFrame:
+    df = jn._read_df(ETF_REPO_PATH, ETF_LOCAL_PATH, ETF_COLUMNS)
+    if not df.empty:
+        df["date"] = pd.to_datetime(df["date"]).dt.date
+        for c in ("qty", "price", "fee", "balance"):
+            df[c] = pd.to_numeric(df[c])
+        df["import_key"] = df["import_key"].astype(object).where(df["import_key"].notna(), "")
+    return df
+
+
+def etf_holdings(etf_df: pd.DataFrame) -> pd.DataFrame:
+    """장기 보유 ETF 현황. 수량은 파일의 마지막 보유수량(외화유가증권), 평균단가는 이동평균(수수료 포함).
+    파일에 없는 기초 보유분이 있어 거래로 계산한 수량과 보유수량이 다르면 cost_complete=False(평균단가 신뢰 불가)."""
+    cols = ["ticker", "name", "qty", "avg_cost", "cost", "cost_complete", "first_buy"]
+    if etf_df is None or etf_df.empty:
+        return pd.DataFrame(columns=cols)
+    rows = []
+    for ticker, g in etf_df.sort_values(["date", "import_key"]).groupby("ticker"):
+        qty, cost = 0.0, 0.0
+        for r in g.itertuples():
+            if r.side == "BUY":
+                cost += r.qty * r.price + r.fee
+                qty += r.qty
+            elif qty > 0:
+                take = min(r.qty, qty)
+                cost -= cost / qty * take
+                qty -= take
+        held = float(g.iloc[-1]["balance"]) if pd.notna(g.iloc[-1]["balance"]) else qty
+        if held <= 0:
+            continue
+        complete = abs(qty - held) < 1e-9
+        rows.append({"ticker": ticker, "name": g.iloc[-1]["name"], "qty": held,
+                     "avg_cost": (cost / qty) if complete and qty else float("nan"),
+                     "cost": cost if complete else float("nan"), "cost_complete": complete,
+                     "first_buy": g[g["side"] == "BUY"]["date"].min() if (g["side"] == "BUY").any() else None})
+    return pd.DataFrame(rows, columns=cols)
 
 
 # ------------------------------------------------------------------
@@ -295,7 +417,7 @@ def apply_plan(plan: dict, extra_map: dict | None = None) -> dict:
 
     def exit_row(tid, s):
         return {"id": uuid.uuid4().hex[:12], "trade_id": tid, "date": s["date"], "price": s["price"],
-                "shares": int(s["shares"]), "memo": "증권사 거래내역", "import_key": s["key"]}
+                "shares": int(s["shares"]), "memo": "증권사 거래내역", "import_key": s["key"], "fee": s["fee"]}
 
     for lot in plan["lots"]:
         if lot["mode"] == "exists":
@@ -326,6 +448,7 @@ def apply_plan(plan: dict, extra_map: dict | None = None) -> dict:
             trades.at[i, "remaining_shares"] = left
             trades.at[i, "status"] = status
             trades.at[i, "import_key"] = lot["key"]
+            trades.at[i, "entry_fee"] = lot["entry_fee"]
             trades.at[i, "asset_name"] = lot["name"]
             new_exit_rows += [exit_row(tid, s) for s in lot["sells"]]
             reconcile.append((tid, [s["date"] for s in lot["sells"]], left == 0))
@@ -356,7 +479,7 @@ def apply_plan(plan: dict, extra_map: dict | None = None) -> dict:
             "status": status, "phase": "STAGE_0",
             "last_checked_date": (last_sale if status == "CLOSED" else prev["entry_idx"].date() - timedelta(days=1)),
             "memo": carry["memo"], "archived": bool(carry["archived"]), "mistake_tags": carry["mistake_tags"],
-            "lesson": carry["lesson"], "import_key": lot["key"],
+            "lesson": carry["lesson"], "import_key": lot["key"], "entry_fee": lot["entry_fee"],
         })
         new_exit_rows += [exit_row(tid, s) for s in lot["sells"]]
         res["exits_added"] += len(lot["sells"])
@@ -377,12 +500,37 @@ def apply_plan(plan: dict, extra_map: dict | None = None) -> dict:
         add = pd.DataFrame(new_exit_rows, columns=jn.EXIT_COLUMNS)
         exits = add if exits.empty else pd.concat([exits, add], ignore_index=True)
 
+    for tid, fee in plan["fee_updates"]["trades"]:
+        trades.loc[trades["id"] == tid, "entry_fee"] = fee
+    for key, fee in plan["fee_updates"]["exits"]:
+        exits.loc[exits["import_key"] == key, "fee"] = fee
+    res["fee_updates"] = len(plan["fee_updates"]["trades"]) + len(plan["fee_updates"]["exits"])
     jn.save_trades(trades.reset_index(drop=True), "Import broker statement: trades")
     jn.save_exits(exits.reset_index(drop=True), "Import broker statement: exits")
     if drop_signal_trades:
         jn.save_signals(signals.reset_index(drop=True), "Import broker statement: replace signals")
     if extra_map:
         save_name_map_entries(extra_map)
+    nd = plan["dividends_new"]
+    if len(nd):
+        cur = load_dividends()
+        add = pd.DataFrame({"id": [uuid.uuid4().hex[:12] for _ in range(len(nd))], "import_key": nd["key"].values,
+                            "date": nd["date"].values, "name": nd["name"].values, "ticker": nd["ticker"].values,
+                            "kind": nd["kind"].values, "gross": nd["gross"].values, "tax": nd["tax"].values,
+                            "net": nd["net"].values}, columns=DIV_COLUMNS)
+        jn._write_df(add if cur.empty else pd.concat([cur, add], ignore_index=True), DIV_REPO_PATH, DIV_LOCAL_PATH,
+                     "Import broker statement: dividends")
+    res["dividends_added"] = len(nd)
+    ne = plan["etf_new"]
+    if len(ne):
+        cur = load_etf_trades()
+        add = pd.DataFrame({"import_key": ne["key"].values, "date": ne["date"].values, "ticker": ne["ticker"].values,
+                            "name": ne["name"].values, "side": ne["side"].values, "qty": ne["qty"].values,
+                            "price": ne["price"].values, "fee": ne["fee"].values, "balance": ne["balance"].values},
+                           columns=ETF_COLUMNS)
+        jn._write_df(add if cur.empty else pd.concat([cur, add], ignore_index=True), ETF_REPO_PATH, ETF_LOCAL_PATH,
+                     "Import broker statement: ETF trades")
+    res["etf_added"] = len(ne)
 
     # 새로 만든 열린 포지션은 진입일부터 지금까지의 시그널을 한 번에 감지한다. 이미 지나간 시그널이라
     # 텔레그램 알림은 보내지 않도록 notified 처리한다.
