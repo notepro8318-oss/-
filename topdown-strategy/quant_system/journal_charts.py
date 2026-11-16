@@ -51,29 +51,30 @@ def fig_equity(eq: pd.DataFrame, bm: pd.DataFrame, twr: pd.Series, mode: str = "
 
 
 def fig_cum_realized(cum: pd.DataFrame) -> go.Figure:
-    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.7, 0.3], vertical_spacing=0.06)
+    """누적 실현손익(수수료 반영) 곡선."""
+    fig = go.Figure()
     last = float(cum["cum"].iloc[-1]) if len(cum) else 0.0
-    col = UP if last >= 0 else DOWN
-    fig.add_trace(go.Scatter(x=cum.index, y=cum["cum"], name="누적 실현손익", line=dict(color=col, width=2.5, shape="hv"),
-                             fill="tozeroy", fillcolor="rgba(224,49,49,0.10)" if last >= 0 else "rgba(28,126,214,0.10)",
-                             hovertemplate="%{y:$,.0f}"), row=1, col=1)
-    fig.add_trace(go.Scatter(x=cum.index, y=cum["dd"], name="고점 대비 낙폭", line=dict(color=DOWN, width=1.5, shape="hv"),
-                             fill="tozeroy", fillcolor="rgba(28,126,214,0.20)", hovertemplate="%{y:$,.0f}"), row=2, col=1)
+    fig.add_trace(go.Scatter(x=cum.index, y=cum["cum"], name="누적 실현손익", line=dict(color=UP if last >= 0 else DOWN,
+                             width=2.5, shape="hv"), fill="tozeroy",
+                             fillcolor="rgba(224,49,49,0.10)" if last >= 0 else "rgba(28,126,214,0.10)",
+                             hovertemplate="%{y:$,.0f}"))
     fig.update_yaxes(tickprefix="$", tickformat=",.0f")
-    return _layout(fig, 340)
+    return _layout(fig, 320, legend=False)
 
 
 def fig_monthly(mc: pd.DataFrame) -> go.Figure:
+    """월별 손익: 주식 매매손익(수수료 반영)과 배당(세후)을 나란히(별개로) 보여준다."""
     fig = go.Figure()
-    gain, loss = mc["매매손익"].clip(lower=0), mc["매매손익"].clip(upper=0)
-    fig.add_trace(go.Bar(x=mc["월"], y=gain, name="매매이익", marker_color=UP, hovertemplate="%{y:$,.0f}"))
+    stock = mc["매매손익"] + mc["수수료"]            # 수수료는 음수로 들어 있다
+    gain, loss = stock.clip(lower=0), stock.clip(upper=0)
+    fig.add_trace(go.Bar(x=mc["월"], y=gain, name="주식 이익", marker_color=UP, offsetgroup="stock",
+                         hovertemplate="주식 %{y:$,.0f}"))
     if (loss != 0).any():
-        fig.add_trace(go.Bar(x=mc["월"], y=loss, name="매매손실", marker_color=DOWN, hovertemplate="%{y:$,.0f}"))
-    if (mc["배당(세후)"] != 0).any():
-        fig.add_trace(go.Bar(x=mc["월"], y=mc["배당(세후)"], name="배당(세후)", marker_color=DIV, hovertemplate="%{y:$,.0f}"))
-    if (mc["수수료"] != 0).any():
-        fig.add_trace(go.Bar(x=mc["월"], y=mc["수수료"], name="수수료", marker_color=FEE, hovertemplate="%{y:$,.2f}"))
-    fig.update_layout(barmode="relative")
+        fig.add_trace(go.Bar(x=mc["월"], y=loss, name="주식 손실", marker_color=DOWN, offsetgroup="stock",
+                             hovertemplate="주식 %{y:$,.0f}"))
+    fig.add_trace(go.Bar(x=mc["월"], y=mc["배당(세후)"], name="배당(세후)", marker_color=DIV, offsetgroup="dividend",
+                         hovertemplate="배당 %{y:$,.0f}"))
+    fig.update_layout(barmode="group", bargap=0.25, bargroupgap=0.05)
     fig.update_yaxes(tickprefix="$", tickformat=",.0f")
     return _layout(fig, 300)
 

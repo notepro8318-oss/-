@@ -764,13 +764,13 @@ def _render_dashboard(trades_df, exits_df, signals_df, open_trades, closed_res_a
     # ---- 실현손익 곡선 / 월별 구성
     c1, c2 = st.columns(2)
     with c1:
-        st.markdown("**💰 누적 실현손익 · 낙폭**")
+        st.markdown("**💰 누적 실현손익**")
         if len(cum):
             _plot(jc.fig_cum_realized(cum))
         else:
             st.caption("이 기간에 매도 기록이 없습니다.")
     with c2:
-        st.markdown("**🗓 월별 손익 구성**")
+        st.markdown("**🗓 월별 손익 — 주식 vs 배당**")
         mc = ja.monthly_components(ex, div_df, p_start, p_end)
         if len(mc):
             _plot(jc.fig_monthly(mc))
