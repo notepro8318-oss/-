@@ -75,6 +75,7 @@ import journal_analytics as ja
 import journal_charts as jc
 from qs_config import TP1_PCT as _TP1_PCT, TP2_PCT as _TP2_PCT
 import broker_import
+import market_clock
 
 st.set_page_config(page_title="TopDown Quant System", page_icon="📊", layout="wide")
 
@@ -1071,7 +1072,50 @@ def _on_usd_change():
     st.session_state["capital_usd_text"] = _fmt_comma(raw)
 
 
+def _market_clock_html() -> str:
+    """미국 증시 상태 카드(HTML). 정규장 오픈 중이면 마감까지, 아니면 개장까지 남은 시간."""
+    from datetime import timezone
+    st_ = market_clock.market_status(datetime.now(timezone.utc))
+    kst = market_clock.KST
+    hhmm = lambda dt: dt.astimezone(kst).strftime("%H:%M")
+    state = st_["state"]
+    if state == "open":
+        color, title = "#2F9E44", "🟢 미국 장 오픈 중"
+        sub = f"마감까지{' (조기 마감)' if st_['early'] else ''}"
+    elif state == "pre":
+        color, title = "#F59F00", "🟡 프리마켓"
+        sub = "정규장 개장까지"
+    elif state == "post":
+        color, title = "#F59F00", "🟠 애프터마켓"
+        sub = "다음 개장까지"
+    else:
+        color, title = "#E03131", "🔴 장 마감" + (f" · {st_['holiday']} 휴장" if st_["holiday"] else "")
+        sub = "다음 개장까지"
+    nxt = st_["target"].astimezone(kst)
+    foot = f"{'마감' if state == 'open' else '개장'} 한국시간 {nxt:%m/%d(%a) %H:%M}".replace(
+        "Mon", "월").replace("Tue", "화").replace("Wed", "수").replace("Thu", "목").replace("Fri", "금").replace(
+        "Sat", "토").replace("Sun", "일")
+    if state == "open":
+        foot += f" · 개장 {hhmm(st_['open_kst'])}"
+    return (f"<div style='border:1px solid {color}55;background:{color}14;border-radius:10px;padding:8px 12px;margin-bottom:8px'>"
+            f"<div style='font-weight:600;font-size:14px'>{title}</div>"
+            f"<div style='font-size:12px;opacity:.75'>{sub}</div>"
+            f"<div style='font-family:monospace;font-size:24px;font-weight:700;color:{color};line-height:1.25'>"
+            f"{market_clock.fmt_countdown(st_['seconds'])}</div>"
+            f"<div style='font-size:11px;opacity:.65'>{foot}</div></div>")
+
+
+def _render_market_clock() -> None:
+    st.markdown(_market_clock_html(), unsafe_allow_html=True)
+
+
+# 1초마다 이 카드만 다시 그린다(st.fragment가 있는 Streamlit 버전에서). 없으면 한 번만 그린다.
+if hasattr(st, "fragment"):
+    _render_market_clock = st.fragment(run_every=1)(_render_market_clock)
+
+
 with st.sidebar:
+    _render_market_clock()
     # key + on_change="rerun"으로 사이드바 탭 전환 시 즉시 재실행되게 해, 메인 화면의
     # "매매일지 현황"을 스크리닝 탭 선택 중에는 숨길 수 있다 (tab_journal.open으로 판별).
     tab_journal, tab_screening = st.tabs(["📓 매매일지", "🔍 스크리닝"], key="sidebar_nav", on_change="rerun")
