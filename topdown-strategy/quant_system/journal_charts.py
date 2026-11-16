@@ -50,52 +50,47 @@ def fig_equity(eq: pd.DataFrame, bm: pd.DataFrame, twr: pd.Series, mode: str = "
     return _layout(fig, 340)
 
 
-def fig_cum_realized(cum: pd.DataFrame) -> go.Figure:
-    """누적 실현손익(수수료 반영) 곡선."""
+def fig_monthly_equity(me: pd.DataFrame) -> go.Figure:
+    """월말 계좌 평가금액(USD). 전월 대비 증감은 호버에, 입출금이 있던 달은 따로 표시한다."""
     fig = go.Figure()
-    last = float(cum["cum"].iloc[-1]) if len(cum) else 0.0
-    fig.add_trace(go.Scatter(x=cum.index, y=cum["cum"], name="누적 실현손익", line=dict(color=UP if last >= 0 else DOWN,
-                             width=2.5, shape="hv"), fill="tozeroy",
-                             fillcolor="rgba(224,49,49,0.10)" if last >= 0 else "rgba(28,126,214,0.10)",
-                             hovertemplate="%{y:$,.0f}"))
+    chg = me["증감"].fillna(0)
+    fig.add_trace(go.Scatter(
+        x=me["월"], y=me["평가금액"], mode="lines+markers+text", line=dict(color=ACCOUNT, width=2.5),
+        marker=dict(size=9, color=[ACCOUNT if i == 0 else (UP if c >= 0 else DOWN) for i, c in enumerate(chg)],
+                    line=dict(width=1, color="white")),
+        text=[f"${v / 1000:,.1f}K" if (len(me) <= 12 or i == len(me) - 1) else "" for i, v in enumerate(me["평가금액"])],
+        textposition="top center",
+        customdata=np.stack([me["증감"].fillna(0), me["순입금"]], axis=1),
+        hovertemplate="%{x}<br>평가금액 %{y:$,.0f}<br>전월 대비 %{customdata[0]:+$,.0f}<br>입출금 %{customdata[1]:+$,.0f}<extra></extra>"))
+    lo, hi = float(me["평가금액"].min()), float(me["평가금액"].max())
+    pad = (hi - lo) * 0.18 or hi * 0.05 or 1.0
+    fig.update_yaxes(tickprefix="$", tickformat=",.0f", range=[lo - pad, hi + pad * 1.4])
+    fig.update_xaxes(type="category")
+    return _layout(fig, 320, legend=False).update_layout(hovermode="closest")
+
+
+def fig_monthly_stock(mc: pd.DataFrame) -> go.Figure:
+    """월별 주식 매매손익(수수료 반영). 이익 빨강, 손실 파랑."""
+    stock = mc["매매손익"] + mc["수수료"]
+    fig = go.Figure(go.Bar(x=mc["월"], y=stock, marker_color=_sign_colors(stock),
+                           text=[f"${v:+,.0f}" if (abs(v) >= 1 and len(mc) <= 12) else "" for v in stock],
+                           textposition="outside",
+                           cliponaxis=False, hovertemplate="%{x} 주식 %{y:$,.0f}<extra></extra>"))
+    fig.update_xaxes(type="category")
     fig.update_yaxes(tickprefix="$", tickformat=",.0f")
-    return _layout(fig, 320, legend=False)
+    return _layout(fig, 300, legend=False).update_layout(hovermode="closest")
 
 
-def fig_monthly(mc: pd.DataFrame) -> go.Figure:
-    """월별 손익: 주식 매매손익(수수료 반영)과 배당(세후)을 나란히(별개로) 보여준다."""
-    fig = go.Figure()
-    stock = mc["매매손익"] + mc["수수료"]            # 수수료는 음수로 들어 있다
-    gain, loss = stock.clip(lower=0), stock.clip(upper=0)
-    fig.add_trace(go.Bar(x=mc["월"], y=gain, name="주식 이익", marker_color=UP, offsetgroup="stock",
-                         hovertemplate="주식 %{y:$,.0f}"))
-    if (loss != 0).any():
-        fig.add_trace(go.Bar(x=mc["월"], y=loss, name="주식 손실", marker_color=DOWN, offsetgroup="stock",
-                             hovertemplate="주식 %{y:$,.0f}"))
-    fig.add_trace(go.Bar(x=mc["월"], y=mc["배당(세후)"], name="배당(세후)", marker_color=DIV, offsetgroup="dividend",
-                         hovertemplate="배당 %{y:$,.0f}"))
-    fig.update_layout(barmode="group", bargap=0.25, bargroupgap=0.05)
+def fig_monthly_dividend(mc: pd.DataFrame) -> go.Figure:
+    """월별 배당 수령액(세후)."""
+    d = mc["배당(세후)"]
+    fig = go.Figure(go.Bar(x=mc["월"], y=d, marker_color=DIV,
+                           text=[f"${v:,.0f}" if (v >= 1 and len(mc) <= 12) else "" for v in d],
+                           textposition="outside",
+                           cliponaxis=False, hovertemplate="%{x} 배당 %{y:$,.2f}<extra></extra>"))
+    fig.update_xaxes(type="category")
     fig.update_yaxes(tickprefix="$", tickformat=",.0f")
-    return _layout(fig, 300)
-
-
-def fig_r_hist(res: pd.DataFrame) -> go.Figure:
-    """R배수 분포. 손실은 −1R 근처에 모이고 수익은 오른쪽으로 길게 뻗는 모양이 건강한 전략이다."""
-    r = res["r_multiple"].dropna()
-    fig = go.Figure()
-    if len(r):
-        lo, hi = np.floor(r.min() * 2) / 2, np.ceil(r.max() * 2) / 2 + 0.5
-        edges = np.arange(lo, max(hi, lo + 1.0) + 0.001, 0.5)
-        cnt, _ = np.histogram(r, bins=edges)
-        centers = (edges[:-1] + edges[1:]) / 2
-        fig.add_trace(go.Bar(x=centers, y=cnt, width=0.45, marker_color=_sign_colors(centers), name="거래 수",
-                             hovertemplate="%{x:+.2f}R 부근 %{y}건"))
-        fig.add_vline(x=float(r.mean()), line_dash="dash", line_color=ACCOUNT,
-                      annotation_text=f"평균 {r.mean():+.2f}R", annotation_position="top")
-        fig.add_vline(x=0, line_color=GRID)
-    fig.update_xaxes(ticksuffix="R", title_text=None)
-    fig.update_yaxes(dtick=1, title_text="거래 수")
-    return _layout(fig, 300, legend=False)
+    return _layout(fig, 300, legend=False).update_layout(hovermode="closest")
 
 
 def fig_scatter(res: pd.DataFrame) -> go.Figure:
@@ -114,45 +109,12 @@ def fig_scatter(res: pd.DataFrame) -> go.Figure:
     return _layout(fig, 320, legend=False).update_layout(hovermode="closest")
 
 
-def fig_contrib(ct: pd.DataFrame) -> go.Figure:
-    labels = [f"{t}  ${v:+,.0f}" for t, v in zip(ct["ticker"], ct["net"])]
-    fig = go.Figure(go.Bar(x=ct["net"], y=labels, orientation="h", marker_color=_sign_colors(ct["net"]),
-                           hovertemplate="%{y}<extra></extra>"))
-    fig.update_xaxes(tickprefix="$", tickformat=",.0f")
-    fig.update_yaxes(automargin=True)
-    return _layout(fig, max(220, 30 * len(ct) + 70), legend=False).update_layout(hovermode="closest")
-
-
 def fig_donut(labels: list, values: list, title: str, colors: list | None = None) -> go.Figure:
     fig = go.Figure(go.Pie(labels=labels, values=values, hole=0.55, sort=False, marker=dict(colors=colors),
                            textinfo="label+percent", textfont=dict(size=12),
                            hovertemplate="%{label} $%{value:,.0f} (%{percent})<extra></extra>"))
     fig.update_layout(title=dict(text=title, font=dict(size=14)))
     return _layout(fig, 280, legend=False).update_layout(hovermode="closest", margin=dict(l=8, r=8, t=40, b=8))
-
-
-def fig_calendar(daily: pd.DataFrame) -> go.Figure:
-    """일별 실현손익 달력(열=주, 행=요일). 빨강 이익, 파랑 손실."""
-    fig = go.Figure()
-    if len(daily):
-        d = daily.copy()
-        d["date"] = pd.to_datetime(d["date"])
-        first = d["date"].min() - pd.Timedelta(days=int(d["date"].min().weekday()))
-        weeks = int((d["date"].max() - first).days // 7) + 1
-        z = np.full((7, weeks), np.nan)
-        text = np.full((7, weeks), "", dtype=object)
-        for _, r in d.iterrows():
-            w, wd = int((r["date"] - first).days // 7), int(r["date"].weekday())
-            z[wd, w] = r["net"]
-            text[wd, w] = f"{r['date']:%Y-%m-%d} ${r['net']:+,.0f}"
-        xs = [(first + pd.Timedelta(weeks=i)).strftime("%m/%d") for i in range(weeks)]
-        m = float(np.nanmax(np.abs(z))) or 1.0
-        fig.add_trace(go.Heatmap(z=z, x=xs, y=["월", "화", "수", "목", "금", "토", "일"], text=text, hoverinfo="text",
-                                 colorscale=[[0, DOWN], [0.5, "rgba(240,240,240,0.9)"], [1, UP]], zmin=-m, zmax=m,
-                                 showscale=False, xgap=3, ygap=3))
-        fig.update_yaxes(autorange="reversed")
-    fig.update_layout(hovermode="closest")
-    return _layout(fig, 250, legend=False)
 
 
 def fig_gauge(rows: list) -> go.Figure:

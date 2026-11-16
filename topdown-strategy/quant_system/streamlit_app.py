@@ -761,53 +761,40 @@ def _render_dashboard(trades_df, exits_df, signals_df, open_trades, closed_res_a
             st.caption("수익률은 입출금(4/14 출금 등)을 보정한 시간가중수익률이고 SPY는 같은 기간 배당 재투자 수익률입니다. "
                        "'금액'은 같은 시점에 같은 금액을 SPY에 넣었을 때의 평가금액입니다. 한국 날짜와 미국 종가가 하루 어긋날 수 있습니다.")
 
-    # ---- 실현손익 곡선 / 월별 구성
+    # ---- 월별 계좌 평가금액 / 월별 주식 손익
+    mc = ja.monthly_components(ex, div_df, p_start, p_end)
     c1, c2 = st.columns(2)
     with c1:
-        st.markdown("**💰 누적 실현손익**")
-        if len(cum):
-            _plot(jc.fig_cum_realized(cum))
+        st.markdown("**🏦 월별 계좌 평가금액**")
+        me = ja.monthly_equity(eq, p_start) if eq is not None else pd.DataFrame()
+        if len(me):
+            _plot(jc.fig_monthly_equity(me))
+            st.caption("월말(이번 달은 최근일) 기준. 점 색은 전월 대비 증감(빨강 증가, 파랑 감소), 입출금은 호버에 표시됩니다.")
         else:
-            st.caption("이 기간에 매도 기록이 없습니다.")
+            st.caption("엑셀 거래내역을 가져오면 월별 평가금액이 표시됩니다.")
     with c2:
-        st.markdown("**🗓 월별 손익 — 주식 vs 배당**")
-        mc = ja.monthly_components(ex, div_df, p_start, p_end)
+        st.markdown("**📈 월별 주식 손익**")
         if len(mc):
-            _plot(jc.fig_monthly(mc))
+            _plot(jc.fig_monthly_stock(mc))
+            st.caption("매도 기준 실현손익(수수료·세금 반영).")
         else:
             st.caption("이 기간에 데이터가 없습니다.")
 
-    # ---- 거래 분포
+    # ---- 월별 배당 실적 / 거래 분포
     c3, c4 = st.columns(2)
     with c3:
-        st.markdown("**🎯 R배수 분포** — 손실은 −1R 근처, 수익은 오른쪽으로 길수록 건강")
-        if res_p["r_multiple"].notna().any():
-            _plot(jc.fig_r_hist(res_p))
+        st.markdown("**💵 월별 배당 실적 (세후)**")
+        if len(mc) and (mc["배당(세후)"] > 0).any():
+            _plot(jc.fig_monthly_dividend(mc))
+            st.caption(f"기간 합계 \\${mc['배당(세후)'].sum():,.0f}.")
         else:
-            st.caption("종료된 거래가 없습니다.")
+            st.caption("이 기간에 받은 배당이 없습니다.")
     with c4:
         st.markdown("**⏱ 보유일 vs 손익률** (점 크기 = 손익 금액)")
         if res_p["return_pct"].notna().any():
             _plot(jc.fig_scatter(res_p))
         else:
             st.caption("종료된 거래가 없습니다.")
-
-    # ---- 종목 기여 / 달력
-    c5, c6 = st.columns(2)
-    with c5:
-        st.markdown("**🏷 종목별 기여 손익**")
-        ct = ja.contribution_by_ticker(ex, p_start, p_end)
-        if len(ct):
-            _plot(jc.fig_contrib(ct))
-        else:
-            st.caption("이 기간에 매도 기록이 없습니다.")
-    with c6:
-        st.markdown("**📅 일별 실현손익 달력**")
-        cal = ja.calendar_frame(ex, p_start, p_end)
-        if len(cal):
-            _plot(jc.fig_calendar(cal))
-        else:
-            st.caption("이 기간에 매도 기록이 없습니다.")
 
     # ---- 자산 구성
     c7, c8 = st.columns(2)

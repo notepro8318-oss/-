@@ -210,6 +210,23 @@ def monthly_components(ex: pd.DataFrame, div_df: pd.DataFrame, start=None, end=N
     return out.reset_index()
 
 
+def monthly_equity(eq: pd.DataFrame, start=None) -> pd.DataFrame:
+    """월말(진행 중인 달은 최근일) 계좌 평가금액과 전월 대비 증감. 입출금이 있는 달은 flow(순입금)도 함께 준다."""
+    cols = ["월", "평가금액", "증감", "순입금"]
+    if eq is None or eq.empty:
+        return pd.DataFrame(columns=cols)
+    e = eq if start is None else eq[eq.index >= pd.Timestamp(start).to_period("M").to_timestamp()]
+    if e.empty:
+        return pd.DataFrame(columns=cols)
+    per = e.index.to_period("M")
+    val = e["equity"].groupby(per).last()
+    flow = e["flow"].groupby(per).sum()
+    out = pd.DataFrame({"월": val.index.strftime("%Y-%m"), "평가금액": val.values, "순입금": flow.values})
+    prev = pd.concat([pd.Series([np.nan]), pd.Series(val.values[:-1])], ignore_index=True)
+    out["증감"] = out["평가금액"] - prev
+    return out[cols]
+
+
 def calendar_frame(ex: pd.DataFrame, start=None, end=None) -> pd.DataFrame:
     """일별 실현손익(수수료 후) → 주/요일 격자용."""
     if ex.empty:
