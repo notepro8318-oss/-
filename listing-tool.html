@@ -1,0 +1,453 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<style>body{margin:0}img{max-width:100%}[hidden]{display:none!important}</style>
+<title>상품명·키워드 정리기</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one working column — settings strip, action bar, result ledger (table) */
+:root {
+  --bg: #f6f7f6; --surface: #ffffff; --fg: #1b2420; --muted: #5d6b65; --line: #dfe5e2;
+  --accent: #0f6b55; --accent-fg: #ffffff; --accent-soft: #e2f1ec;
+  --warn: #9a5b00; --warn-soft: #fbefd9; --bad: #a3322a; --bad-soft: #fbe3e0;
+  --font-body: "Noto Sans KR", system-ui, -apple-system, "Malgun Gothic", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #121715; --surface: #1a211e; --fg: #e5ece8; --muted: #9aa8a1; --line: #2c3632;
+  --accent: #4cc3a0; --accent-fg: #0b1512; --accent-soft: #183229;
+  --warn: #e7b25c; --warn-soft: #33281a; --bad: #f08b80; --bad-soft: #3a1f1c; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #121715; --surface: #1a211e; --fg: #e5ece8; --muted: #9aa8a1; --line: #2c3632;
+  --accent: #4cc3a0; --accent-fg: #0b1512; --accent-soft: #183229;
+  --warn: #e7b25c; --warn-soft: #33281a; --bad: #f08b80; --bad-soft: #3a1f1c; color-scheme: dark }
+body { background: var(--bg); color: var(--fg); font-family: var(--font-body); font-size: 14px; line-height: 1.55;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 28px 56px; }
+.wrap { max-width: 1180px; margin: 0 auto; display: flex; flex-direction: column; gap: 20px; }
+h1 { font-size: 22px; margin: 0; text-wrap: balance; letter-spacing: -0.01em; }
+.lede { margin: 4px 0 0; color: var(--muted); max-width: 70ch; }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 16px; display: flex; flex-wrap: wrap; gap: 16px 24px; align-items: end; }
+.field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.field > span, .label { font-size: 12px; color: var(--muted); letter-spacing: 0.02em; }
+input[type=text] { font: 500 14px var(--font-mono); padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); width: 180px; }
+.check { display: flex; gap: 8px; align-items: center; font-size: 13px; cursor: pointer; }
+.drop { flex: 1 1 280px; border: 1.5px dashed var(--line); border-radius: 8px; padding: 14px; display: flex; align-items: center; gap: 12px; cursor: pointer; min-width: 0; }
+.drop.over { border-color: var(--accent); background: var(--accent-soft); }
+.drop input { display: none; }
+.drop strong { display: block; overflow-wrap: anywhere; }
+.drop small { color: var(--muted); }
+.bar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+button { font: 500 14px var(--font-body); border-radius: 6px; padding: 9px 16px; cursor: pointer; border: 1px solid var(--line); background: var(--surface); color: var(--fg); }
+button.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+button:disabled { opacity: 0.45; cursor: not-allowed; }
+button:focus-visible, input:focus-visible, [contenteditable]:focus-visible, .drop:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.status { color: var(--muted); font-size: 13px; }
+.status.err { color: var(--bad); }
+.progress { height: 4px; background: var(--line); border-radius: 2px; overflow: hidden; flex: 1 1 160px; max-width: 260px; }
+.progress > i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .3s; }
+.summary { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip { font-size: 12px; padding: 2px 9px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); font-variant-numeric: tabular-nums; }
+.chip.warn { background: var(--warn-soft); color: var(--warn); }
+.chip.bad { background: var(--bad-soft); color: var(--bad); }
+.example-note { font-size: 12px; color: var(--warn); }
+.tablebox { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; }
+table { border-collapse: collapse; width: 100%; min-width: 860px; }
+th, td { text-align: left; vertical-align: top; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+th { font-size: 12px; font-weight: 500; color: var(--muted); letter-spacing: 0.02em; position: sticky; top: 0; background: var(--surface); }
+tr:last-child td { border-bottom: 0; }
+td.code, td.model { font: 13px var(--font-mono); white-space: nowrap; }
+td.orig { color: var(--muted); max-width: 260px; }
+td.name [contenteditable] { font-weight: 700; }
+[contenteditable] { border-radius: 4px; padding: 2px 4px; margin: -2px -4px; }
+[contenteditable]:hover { background: var(--bg); }
+.kw { display: flex; flex-wrap: wrap; gap: 4px; }
+.kw-edit { font-size: 13px; color: var(--fg); min-width: 0; overflow-wrap: anywhere; }
+.kwcount { font-size: 11px; font-variant-numeric: tabular-nums; color: var(--muted); }
+.kwcount.warn { color: var(--warn); }
+.pending { color: var(--muted); font-style: italic; }
+button.link { border: 0; background: none; color: var(--accent); text-decoration: underline; padding: 9px 4px; margin-left: auto; }
+.manual { flex-direction: column; align-items: stretch; }
+.steps { display: flex; flex-direction: column; gap: 4px; }
+.steps ol { margin: 4px 0 0; padding-left: 20px; color: var(--muted); }
+.steps a { color: var(--accent); }
+#manualInfo { color: var(--muted); font-size: 13px; }
+.manual-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
+textarea { font: 12px/1.5 var(--font-mono); padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); resize: vertical; width: 100%; box-sizing: border-box; }
+.rules { font-size: 13px; color: var(--muted); }
+.rules summary { cursor: pointer; color: var(--fg); }
+.rules ul { margin: 8px 0 0; padding-left: 20px; max-width: 80ch; }
+@media (prefers-reduced-motion: reduce) { .progress > i { transition: none; } }
+</style>
+
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>상품명·키워드 정리기</h1>
+    <p class="lede">대량등록 엑셀(List_…xlsx)을 올리면 모델명을 채우고, 상품명을 검색용으로 단순하게 바꾸고, 검색 키워드 8~10개를 만듭니다. 결과는 표에서 바로 고친 뒤 같은 양식의 엑셀로 받습니다.</p>
+  </header>
+
+  <section class="panel" aria-label="설정">
+    <label class="drop" id="drop" tabindex="0">
+      <input type="file" id="file" accept=".xlsx,.xls">
+      <div>
+        <strong id="fileName">엑셀 파일을 끌어다 놓거나 눌러서 선택</strong>
+        <small id="fileMeta">상품코드·상품명·모델명·키워드 열이 있는 양식</small>
+      </div>
+    </label>
+    <label class="field"><span>판매자 ID (모델명 앞부분)</span><input type="text" id="seller" value="onstore8318" autocomplete="off"></label>
+    <div class="field">
+      <span class="label">옵션</span>
+      <label class="check"><input type="checkbox" id="keepOpt"> 상품명에 색상·크기 구분 남기기</label>
+      <label class="check"><input type="checkbox" id="fillTag" checked> 네이버태그 열에도 키워드 넣기 (최대 10개)</label>
+      <label class="check"><input type="checkbox" id="skipDone"> 키워드가 이미 있는 행은 건너뛰기</label>
+    </div>
+  </section>
+
+  <div class="bar">
+    <button class="primary" id="run" disabled>변환 시작</button>
+    <button id="stop" hidden>중지</button>
+    <button id="save" disabled>엑셀 받기</button>
+    <div class="progress" id="prog" hidden><i></i></div>
+    <span class="status" id="status" role="status">파일을 올리면 시작할 수 있습니다.</span>
+    <button id="manualBtn" class="link">복사·붙여넣기로 하기</button>
+  </div>
+
+  <section class="panel manual" id="manual" hidden aria-label="복사·붙여넣기 모드">
+    <div class="steps">
+      <strong>복사·붙여넣기 모드</strong>
+      <span id="manualInfo"></span>
+      <ol>
+        <li>'프롬프트 복사'를 누르고 <a href="https://claude.ai/new" target="_blank" rel="noopener">claude.ai 새 채팅</a>에 붙여넣어 보냅니다.</li>
+        <li>Claude의 답(JSON)을 전부 복사해 아래 오른쪽 칸에 붙여넣고 '결과 적용'을 누릅니다.</li>
+        <li>남은 상품이 있으면 프롬프트가 자동으로 다음 묶음으로 바뀝니다.</li>
+      </ol>
+    </div>
+    <div class="manual-grid">
+      <label class="field"><span>보낼 프롬프트</span><textarea id="promptBox" readonly rows="8"></textarea></label>
+      <label class="field"><span>Claude 답 붙여넣기</span><textarea id="pasteBox" rows="8" placeholder='[{"i":0,"name":"…","keywords":["…"]}]'></textarea></label>
+    </div>
+    <div class="bar">
+      <button class="primary" id="copyPrompt">프롬프트 복사</button>
+      <button id="applyPaste">결과 적용</button>
+    </div>
+  </section>
+
+  <div class="summary" id="summary"></div>
+  <span class="example-note" id="exNote">아래는 예시 행입니다. 파일을 올리면 실제 상품으로 바뀝니다.</span>
+
+  <div class="tablebox">
+    <table>
+      <thead><tr><th>상품코드</th><th>모델명</th><th>원래 상품명</th><th>새 상품명</th><th>키워드</th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </div>
+
+  <details class="rules">
+    <summary>적용 규칙</summary>
+    <ul>
+      <li>모델명: <code>판매자ID_상품코드</code>, 서식 없는 텍스트 셀로 입력합니다.</li>
+      <li>상품명: 디자인 애칭·감성 수식어·브랜드·수량 표기를 빼고, 구매자가 검색창에 칠 일반 명사 조합 2~4단어로 줄입니다. 원래 이름은 '원본상품명(참고용)' 열에 그대로 남습니다.</li>
+      <li>키워드: 실제 검색어 위주 8~10개, 쉼표로 구분, 띄어쓰기 없는 한 덩어리 단어(네이버 태그·쿠팡 검색어 기준).</li>
+      <li>금지어(최고, 1위, 특가, 무료배송, 할인, 주문폭주, 최저가, 세일 등)와 브랜드명은 생성 후 한 번 더 걸러냅니다. 조사만 다른 중복도 지웁니다.</li>
+      <li>키워드가 8개 미만으로 남은 행은 노란 표시가 붙습니다. 표에서 직접 고칠 수 있습니다.</li>
+    </ul>
+  </details>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const BANNED = ["최고","1위","특가","무료배송","무배","할인","주문폭주","최저가","세일","sale","핫딜","이벤트","사은품","증정","베스트","정품","당일배송","당일발송","한정","인기","추천","초특가","땡처리","파격"];
+  const BATCH = 15;
+
+  let wb = null, ws = null, srcName = "", headerIdx = {}, items = [], ctl = null, sample = null, downloads = null;
+
+  // Example rows shown before any upload (clearly marked as examples)
+  items = [
+    { r: 1, code: "DOTO1387851", orig: "위시풀리 크리스마스 양말 장식", name: "크리스마스 양말", keywords: ["크리스마스양말","크리스마스장식","벽걸이양말","산타양말","트리장식","크리스마스소품","선물양말","파티장식"] },
+    { r: 2, code: "DOTO1387843", orig: "50cm 실버캐럴 테이블 트리 완제품", name: "테이블 트리", keywords: ["미니트리","탁상트리","크리스마스트리","테이블트리","소형트리","완제품트리","트리세트","크리스마스인테리어"] },
+    { r: 3, code: "DOTO1387675", orig: "스티치 여성 소가죽 벨트(와인)", name: "여성 벨트", keywords: ["여성벨트","가죽벨트","소가죽벨트","여자벨트","정장벨트","캐주얼벨트","허리띠","패션벨트"] },
+  ];
+
+  const seller = () => ($("seller").value.trim() || "onstore8318");
+  const modelOf = (code) => seller() + "_" + code;
+
+  function cleanKeywords(list, name) {
+    const out = [], seen = new Set();
+    for (let k of list || []) {
+      k = String(k).replace(/[^\p{L}\p{N}]/gu, "").trim();
+      if (k.length < 2 || k.length > 20) continue;
+      const low = k.toLowerCase();
+      if (BANNED.some((b) => low.includes(b.toLowerCase()))) continue;
+      const base = low.replace(/(을|를|이|가|은|는|의|용)$/u, "");
+      if (seen.has(low) || seen.has(base)) continue;
+      seen.add(low); seen.add(base);
+      out.push(k);
+    }
+    return out.slice(0, 10);
+  }
+
+  function render() {
+    const tb = $("rows");
+    tb.textContent = "";
+    for (const it of items) {
+      const tr = document.createElement("tr");
+      const td = (cls, text) => { const c = document.createElement("td"); c.className = cls; if (text != null) c.textContent = text; tr.appendChild(c); return c; };
+      td("code", it.code);
+      td("model", it.code ? modelOf(it.code) : "");
+      td("orig", it.orig);
+      const n = td("name");
+      const nd = document.createElement("div");
+      if (it.name) { nd.contentEditable = "true"; nd.textContent = it.name; nd.addEventListener("input", () => { it.name = nd.textContent.trim(); }); }
+      else { nd.className = "pending"; nd.textContent = it.err ? "실패: " + it.err : "대기 중"; }
+      n.appendChild(nd);
+      const k = td("kwcell");
+      if (it.keywords) {
+        const kd = document.createElement("div");
+        kd.className = "kw-edit"; kd.contentEditable = "true"; kd.textContent = it.keywords.join(",");
+        const cnt = document.createElement("div");
+        const upd = () => { cnt.textContent = it.keywords.length + "개"; cnt.className = "kwcount" + (it.keywords.length < 8 ? " warn" : ""); };
+        kd.addEventListener("input", () => { it.keywords = kd.textContent.split(",").map((s) => s.trim()).filter(Boolean); upd(); });
+        upd(); k.append(kd, cnt);
+      } else { const p = document.createElement("span"); p.className = "pending"; p.textContent = "—"; k.appendChild(p); }
+      tb.appendChild(tr);
+    }
+    renderSummary();
+  }
+
+  function renderSummary() {
+    const s = $("summary"); s.textContent = "";
+    if (!ws) return;
+    const done = items.filter((i) => i.name && i.keywords).length;
+    const low = items.filter((i) => i.keywords && i.keywords.length < 8).length;
+    const failed = items.filter((i) => i.err).length;
+    const dupNames = (() => { const m = {}; items.forEach((i) => { if (i.name) m[i.name] = (m[i.name] || 0) + 1; }); return Object.values(m).filter((v) => v > 1).reduce((a, b) => a + b, 0); })();
+    const chip = (t, cls = "") => { const c = document.createElement("span"); c.className = "chip " + cls; c.textContent = t; s.appendChild(c); };
+    chip(`상품 ${items.length}개`);
+    chip(`완료 ${done}개`);
+    if (low) chip(`키워드 8개 미만 ${low}개`, "warn");
+    if (dupNames) chip(`같은 상품명 ${dupNames}개`, "warn");
+    if (failed) chip(`실패 ${failed}개`, "bad");
+  }
+
+  function setStatus(t, err) { $("status").textContent = t; $("status").className = "status" + (err ? " err" : ""); }
+
+  // ---- file loading ----
+  const drop = $("drop");
+  drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("over"); });
+  drop.addEventListener("dragleave", () => drop.classList.remove("over"));
+  drop.addEventListener("drop", (e) => { e.preventDefault(); drop.classList.remove("over"); if (e.dataTransfer.files[0]) load(e.dataTransfer.files[0]); });
+  drop.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); $("file").click(); } });
+  $("file").addEventListener("change", (e) => { if (e.target.files[0]) load(e.target.files[0]); });
+  $("seller").addEventListener("input", render);
+
+  async function load(file) {
+    try {
+      if (typeof XLSX === "undefined") throw new Error("엑셀 라이브러리를 불러오지 못했습니다. 페이지를 새로고침하세요.");
+      const buf = await file.arrayBuffer();
+      const book = XLSX.read(buf, { type: "array" });
+      const sheet = book.Sheets[book.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "", raw: false });
+      const head = (rows[0] || []).map((h) => String(h).trim());
+      const idx = (n) => head.indexOf(n);
+      headerIdx = { code: idx("상품코드"), name: idx("상품명"), model: idx("모델명"), kw: idx("키워드"), tag: idx("네이버태그") };
+      const missing = ["상품코드", "상품명", "모델명", "키워드"].filter((n) => idx(n) < 0);
+      if (missing.length) throw new Error(`첫 행에 ${missing.join(", ")} 열이 없습니다. 대량등록 양식인지 확인하세요.`);
+      items = [];
+      for (let r = 1; r < rows.length; r++) {
+        const code = String(rows[r][headerIdx.code] || "").trim();
+        const orig = String(rows[r][headerIdx.name] || "").trim();
+        if (!code && !orig) continue;
+        const existingKw = String(rows[r][headerIdx.kw] || "").trim();
+        items.push({ r, code, orig, name: null, keywords: null, existingKw });
+      }
+      wb = book; ws = sheet; srcName = file.name;
+      const m = file.name.match(/^List_\d+_([^_]+)_/);
+      if (m) $("seller").value = m[1];
+      $("fileName").textContent = file.name;
+      $("fileMeta").textContent = `시트 '${book.SheetNames[0]}' · 상품 ${items.length}개`;
+      $("exNote").hidden = true;
+      $("run").disabled = items.length === 0;
+      $("save").disabled = false;
+      setStatus(`상품 ${items.length}개를 읽었습니다. '변환 시작'을 누르세요. 모델명은 지금 받아도 채워집니다.`);
+      render();
+    } catch (e) {
+      setStatus(e.message || "파일을 읽지 못했습니다.", true);
+    }
+  }
+
+  // ---- Claude ----
+  function buildPrompt(batch, keepOpt) {
+    const nameRule = keepOpt
+      ? "색상·크기·길이처럼 같은 상품군끼리 구분되는 옵션은 상품명 끝에 짧게 남긴다(예: '크리스마스 리본 2.7m', '모루 장식 레드')."
+      : "색상·크기·수량(p, 세트, cm) 표기는 뺀다.";
+    return `너는 한국 오픈마켓(네이버 스마트스토어, 쿠팡) 상품 등록 담당자다. 아래 상품 각각에 대해 상품명과 검색 키워드를 만든다.
+
+[상품명 규칙]
+- 구매자가 검색창에 실제로 입력하는 일반 명사 조합 2~4단어로 단순하게 만든다.
+- 디자인 애칭, 감성 수식어(위시풀리, 행복 담은, 샤이닝 등), 브랜드명, 소재 수식어 중 검색에 덜 쓰이는 것은 뺀다.
+- ${nameRule}
+- 예: '위시풀리 크리스마스 양말 장식' → '크리스마스 양말', '스티치 여성 소가죽 벨트(와인)' → '여성 벨트'.
+
+[키워드 규칙]
+- 상품마다 8~10개. 상품명을 바탕으로 실제 쇼핑 검색량과 구매 전환이 높은 구어체·실사용 검색어를 우선한다. 사전적 유의어는 피한다.
+- 각 키워드는 띄어쓰기 없는 한 덩어리 단어(예: 크리스마스양말, 벽걸이양말). 네이버 태그와 쿠팡 검색어에 그대로 넣을 수 있게 한다.
+- 상품명 단어를 그대로 반복하지 말고, 용도·장소·대상·시즌·연관 상품군으로 넓힌다.
+- 금지: 최고, 1위, 특가, 무료배송, 할인, 주문폭주, 최저가, 세일 같은 어뷰징 단어와 다른 회사 브랜드명·캐릭터명.
+- 뜻이 완전히 겹치거나 조사만 다른 단어는 하나만 남긴다.
+
+[상품 목록]
+${batch.map((it, n) => `${n}. ${it.orig}`).join("\n")}
+
+[출력]
+JSON 배열만 출력한다. 다른 글은 쓰지 않는다.
+[{"i":0,"name":"상품명","keywords":["키워드1","키워드2"]}]`;
+  }
+
+  const hasClaude = () => !!(window.claude && typeof window.claude.use === "function");
+  const pending = () => items.filter((it) => !(it.name && it.keywords) && !($("skipDone").checked && it.existingKw));
+
+  function applyBatch(batch, arr) {
+    batch.forEach((it, n) => {
+      const hit = arr.find((x) => Number(x.i) === n) || arr[n];
+      if (hit && hit.name) {
+        it.name = String(hit.name).replace(/\s+/g, " ").trim();
+        it.keywords = cleanKeywords(hit.keywords, it.name);
+        it.err = null;
+      } else it.err = "응답에 이 상품이 없음";
+    });
+  }
+
+  // ---- 복사·붙여넣기 모드 (claude.ai 밖 일반 웹페이지용) ----
+  const MANUAL_MAX = 60;
+  let manualBatch = [];
+  function showManual() {
+    if (!ws) { setStatus("먼저 엑셀 파일을 올리세요.", true); return; }
+    manualBatch = pending().slice(0, MANUAL_MAX);
+    $("manual").hidden = false;
+    if (!manualBatch.length) {
+      $("promptBox").value = ""; $("manualInfo").textContent = "남은 상품이 없습니다. '엑셀 받기'를 누르세요.";
+      setStatus("모든 상품을 정리했습니다. '엑셀 받기'를 누르세요."); return;
+    }
+    $("promptBox").value = buildPrompt(manualBatch, $("keepOpt").checked);
+    $("pasteBox").value = "";
+    const left = pending().length;
+    $("manualInfo").textContent = `이번 묶음 ${manualBatch.length}개` + (left > manualBatch.length ? ` · 남은 상품 ${left}개` : "");
+    setStatus("프롬프트를 복사해 claude.ai에 보내세요.");
+  }
+  $("manualBtn").addEventListener("click", showManual);
+  $("copyPrompt").addEventListener("click", () => {
+    const box = $("promptBox");
+    if (!box.value) return;
+    const fallback = () => { box.focus(); box.select(); setStatus("프롬프트를 선택했습니다. Ctrl+C로 복사하세요."); };
+    try {
+      navigator.clipboard.writeText(box.value).then(() => setStatus("복사했습니다. claude.ai 새 채팅에 붙여넣어 보내세요."), fallback);
+    } catch (e) { fallback(); }
+  });
+  $("applyPaste").addEventListener("click", () => {
+    const t = $("pasteBox").value;
+    const s = t.indexOf("["), e = t.lastIndexOf("]");
+    let arr;
+    try { arr = JSON.parse(t.slice(s, e + 1)); } catch (err) { arr = null; }
+    if (!Array.isArray(arr) || !manualBatch.length) {
+      setStatus("붙여넣은 내용에서 결과를 찾지 못했습니다. Claude 답을 [ 부터 ] 까지 전부 붙여넣으세요.", true); return;
+    }
+    applyBatch(manualBatch, arr);
+    render();
+    showManual();
+  });
+
+  $("run").addEventListener("click", async () => {
+    if (!sample && hasClaude()) sample = await claude.use("sample");
+    if (!sample) { showManual(); setStatus("여기서는 Claude를 바로 부를 수 없어 복사·붙여넣기 모드로 진행합니다."); return; }
+    const keepOpt = $("keepOpt").checked;
+    const todo = items.filter((it) => !(it.name && it.keywords) && !($("skipDone").checked && it.existingKw));
+    if (!todo.length) { setStatus("변환할 행이 없습니다."); return; }
+    ctl = new AbortController();
+    $("run").disabled = true; $("stop").hidden = false; $("prog").hidden = false;
+    let done = 0;
+    const bar = $("prog").firstElementChild;
+    try {
+      for (let s = 0; s < todo.length; s += BATCH) {
+        if (ctl.signal.aborted) break;
+        const batch = todo.slice(s, s + BATCH);
+        setStatus(`Claude가 ${s + 1}~${s + batch.length}번째 상품을 정리하는 중… (총 ${todo.length}개)`);
+        let res;
+        try {
+          res = await sample.json(buildPrompt(batch, keepOpt), { signal: ctl.signal, modelTier: "default" });
+        } catch (e) {
+          if (e && e.code === "cancelled") break;
+          if (e && (e.code === "not_granted")) throw new Error("Claude 사용이 허용되지 않았습니다. 허용해야 변환할 수 있습니다.");
+          if (e && e.code === "rate_limited") throw new Error("요청이 많아 잠시 막혔습니다. 1분쯤 뒤에 '변환 시작'을 다시 누르면 남은 행만 이어서 합니다.");
+          batch.forEach((it) => { it.err = (e && e.message) || "응답 오류"; });
+          done += batch.length; render(); continue;
+        }
+        const arr = Array.isArray(res) ? res : (res && res.items) || [];
+        applyBatch(batch, arr);
+        done += batch.length;
+        bar.style.width = Math.round((done / todo.length) * 100) + "%";
+        render();
+      }
+      const failed = items.filter((i) => i.err).length;
+      setStatus(ctl.signal.aborted ? "중지했습니다. 다시 누르면 남은 행만 이어서 합니다."
+        : failed ? `끝났습니다. ${failed}개는 실패했습니다. '변환 시작'을 다시 누르면 실패한 행만 다시 합니다.`
+        : "끝났습니다. 표에서 고칠 곳을 고친 뒤 '엑셀 받기'를 누르세요.");
+    } catch (e) {
+      setStatus(e.message, true);
+    } finally {
+      $("run").disabled = false; $("stop").hidden = true; ctl = null;
+    }
+  });
+  $("stop").addEventListener("click", () => ctl && ctl.abort());
+
+  // ---- write back ----
+  function setText(r, c, v) {
+    if (c < 0) return;
+    const addr = XLSX.utils.encode_cell({ r, c });
+    if (v === "" || v == null) { delete ws[addr]; return; }
+    ws[addr] = { t: "s", v: String(v) };
+  }
+
+  $("save").addEventListener("click", async () => {
+    if (!ws) return;
+    for (const it of items) {
+      setText(it.r, headerIdx.model, modelOf(it.code));
+      if (it.name) setText(it.r, headerIdx.name, it.name);
+      if (it.keywords && it.keywords.length) {
+        setText(it.r, headerIdx.kw, it.keywords.join(","));
+        if ($("fillTag").checked) setText(it.r, headerIdx.tag, it.keywords.slice(0, 10).join(","));
+      }
+    }
+    const out = XLSX.write(wb, { bookType: "xlsx", type: "array" });
+    const fname = srcName.replace(/\.xlsx?$/i, "") + "_정리.xlsx";
+    if (!downloads && hasClaude()) downloads = await claude.use("downloads");
+    if (!downloads) {
+      const blob = new Blob([out], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob); a.download = fname;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+      setStatus(`${fname} 파일을 내려받았습니다.`);
+      return;
+    }
+    try {
+      await downloads.save({ filename: fname, data: new Blob([out]) });
+      setStatus(`${fname} 저장을 넘겼습니다.`);
+    } catch (e) {
+      if (e && e.code === "declined") setStatus("저장을 취소했습니다.");
+      else setStatus("파일을 저장하지 못했습니다: " + ((e && e.message) || "알 수 없는 오류"), true);
+    }
+  });
+
+  render();
+})();
+</script>
+
+</body>
+</html>
