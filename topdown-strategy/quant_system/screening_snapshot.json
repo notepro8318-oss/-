@@ -1,56 +1,56 @@
 {
-  "date": "2026-11-16",
+  "date": "2026-11-17",
   "regime": "SIDEWAYS",
   "sideways_mode": "HYBRID",
   "leaders": [
-    "XLP",
-    "XLY"
+    "XLV",
+    "XLRE"
   ],
   "candidates": [
     {
-      "ticker": "KO",
-      "sector": "XLP",
-      "composite_score": 2.6,
-      "entry_price": 99.48,
-      "stop": 94.89,
-      "weight_pct": 26.5,
-      "shares": 106
+      "ticker": "LLY",
+      "sector": "XLV",
+      "composite_score": 3.0,
+      "entry_price": 1415.55,
+      "stop": 1285.74,
+      "weight_pct": 23.6,
+      "shares": 6
     },
     {
-      "ticker": "MO",
-      "sector": "XLP",
-      "composite_score": 2.8,
-      "entry_price": 78.9,
-      "stop": 74.31,
-      "weight_pct": 24.6,
-      "shares": 124
+      "ticker": "ABBV",
+      "sector": "XLV",
+      "composite_score": 3.1,
+      "entry_price": 292.82,
+      "stop": 274.44,
+      "weight_pct": 22.8,
+      "shares": 31
     },
     {
-      "ticker": "PG",
-      "sector": "XLP",
-      "composite_score": 4.2,
-      "entry_price": 173.02,
-      "stop": 164.4,
-      "weight_pct": 16.4,
-      "shares": 37
+      "ticker": "JNJ",
+      "sector": "XLV",
+      "composite_score": 3.4,
+      "entry_price": 278.7,
+      "stop": 260.85,
+      "weight_pct": 20.8,
+      "shares": 29
     },
     {
-      "ticker": "TGT",
-      "sector": "XLP",
-      "composite_score": 4.2,
-      "entry_price": 160.32,
-      "stop": 146.93,
-      "weight_pct": 16.4,
-      "shares": 40
+      "ticker": "AMGN",
+      "sector": "XLV",
+      "composite_score": 3.8,
+      "entry_price": 457.93,
+      "stop": 426.78,
+      "weight_pct": 18.6,
+      "shares": 16
     },
     {
-      "ticker": "CL",
-      "sector": "XLP",
-      "composite_score": 4.3,
-      "entry_price": 100.99,
-      "stop": 95.06,
-      "weight_pct": 16.0,
-      "shares": 63
+      "ticker": "WELL",
+      "sector": "XLRE",
+      "composite_score": 5.0,
+      "entry_price": 245.76,
+      "stop": 233.09,
+      "weight_pct": 14.2,
+      "shares": 23
     }
   ]
 }
