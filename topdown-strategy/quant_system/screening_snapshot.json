@@ -1,56 +1,56 @@
 {
-  "date": "2026-11-17",
+  "date": "2026-11-18",
   "regime": "SIDEWAYS",
   "sideways_mode": "HYBRID",
   "leaders": [
-    "XLV",
-    "XLRE"
+    "XLU",
+    "XLY"
   ],
   "candidates": [
     {
-      "ticker": "LLY",
-      "sector": "XLV",
-      "composite_score": 3.0,
-      "entry_price": 1415.55,
-      "stop": 1285.74,
-      "weight_pct": 23.6,
-      "shares": 6
+      "ticker": "SBUX",
+      "sector": "XLY",
+      "composite_score": 1.3,
+      "entry_price": 109.11,
+      "stop": 100.79,
+      "weight_pct": 39.2,
+      "shares": 143
     },
     {
-      "ticker": "ABBV",
-      "sector": "XLV",
-      "composite_score": 3.1,
-      "entry_price": 292.82,
-      "stop": 274.44,
-      "weight_pct": 22.8,
-      "shares": 31
+      "ticker": "ED",
+      "sector": "XLU",
+      "composite_score": 2.3,
+      "entry_price": 119.27,
+      "stop": 113.13,
+      "weight_pct": 22.2,
+      "shares": 74
     },
     {
-      "ticker": "JNJ",
-      "sector": "XLV",
-      "composite_score": 3.4,
-      "entry_price": 278.7,
-      "stop": 260.85,
-      "weight_pct": 20.8,
-      "shares": 29
+      "ticker": "DUK",
+      "sector": "XLU",
+      "composite_score": 2.7,
+      "entry_price": 130.05,
+      "stop": 124.18,
+      "weight_pct": 18.9,
+      "shares": 58
     },
     {
-      "ticker": "AMGN",
-      "sector": "XLV",
-      "composite_score": 3.8,
-      "entry_price": 457.93,
-      "stop": 426.78,
-      "weight_pct": 18.6,
+      "ticker": "AMZN",
+      "sector": "XLY",
+      "composite_score": 4.7,
+      "entry_price": 267.74,
+      "stop": 240.24,
+      "weight_pct": 10.8,
       "shares": 16
     },
     {
-      "ticker": "WELL",
-      "sector": "XLRE",
-      "composite_score": 5.0,
-      "entry_price": 245.76,
-      "stop": 233.09,
-      "weight_pct": 14.2,
-      "shares": 23
+      "ticker": "SO",
+      "sector": "XLU",
+      "composite_score": 5.7,
+      "entry_price": 94.41,
+      "stop": 89.47,
+      "weight_pct": 8.9,
+      "shares": 37
     }
   ]
 }
