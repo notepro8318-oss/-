@@ -1,56 +1,56 @@
 {
-  "date": "2026-11-18",
+  "date": "2026-11-19",
   "regime": "SIDEWAYS",
   "sideways_mode": "HYBRID",
   "leaders": [
-    "XLU",
-    "XLY"
+    "XLP",
+    "XLRE"
   ],
   "candidates": [
     {
-      "ticker": "SBUX",
-      "sector": "XLY",
-      "composite_score": 1.3,
-      "entry_price": 109.11,
-      "stop": 100.79,
-      "weight_pct": 39.2,
-      "shares": 143
+      "ticker": "TGT",
+      "sector": "XLP",
+      "composite_score": 1.0,
+      "entry_price": 167.46,
+      "stop": 152.0,
+      "weight_pct": 54.2,
+      "shares": 129
     },
     {
-      "ticker": "ED",
-      "sector": "XLU",
-      "composite_score": 2.3,
-      "entry_price": 119.27,
-      "stop": 113.13,
-      "weight_pct": 22.2,
-      "shares": 74
+      "ticker": "KO",
+      "sector": "XLP",
+      "composite_score": 3.7,
+      "entry_price": 96.09,
+      "stop": 91.37,
+      "weight_pct": 14.7,
+      "shares": 61
     },
     {
-      "ticker": "DUK",
-      "sector": "XLU",
-      "composite_score": 2.7,
-      "entry_price": 130.05,
-      "stop": 124.18,
-      "weight_pct": 18.9,
-      "shares": 58
+      "ticker": "COST",
+      "sector": "XLP",
+      "composite_score": 4.9,
+      "entry_price": 1093.83,
+      "stop": 1041.41,
+      "weight_pct": 11.1,
+      "shares": 4
     },
     {
-      "ticker": "AMZN",
-      "sector": "XLY",
-      "composite_score": 4.7,
-      "entry_price": 267.74,
-      "stop": 240.24,
+      "ticker": "PG",
+      "sector": "XLP",
+      "composite_score": 5.0,
+      "entry_price": 167.85,
+      "stop": 159.51,
       "weight_pct": 10.8,
-      "shares": 16
+      "shares": 25
     },
     {
-      "ticker": "SO",
-      "sector": "XLU",
-      "composite_score": 5.7,
-      "entry_price": 94.41,
-      "stop": 89.47,
-      "weight_pct": 8.9,
-      "shares": 37
+      "ticker": "MO",
+      "sector": "XLP",
+      "composite_score": 5.9,
+      "entry_price": 74.68,
+      "stop": 70.46,
+      "weight_pct": 9.2,
+      "shares": 49
     }
   ]
 }
