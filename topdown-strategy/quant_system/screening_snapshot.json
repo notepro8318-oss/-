@@ -1,56 +1,7 @@
 {
-  "date": "2026-11-19",
-  "regime": "SIDEWAYS",
+  "date": "2026-11-20",
+  "regime": "BEAR",
   "sideways_mode": "HYBRID",
-  "leaders": [
-    "XLP",
-    "XLRE"
-  ],
-  "candidates": [
-    {
-      "ticker": "TGT",
-      "sector": "XLP",
-      "composite_score": 1.0,
-      "entry_price": 167.46,
-      "stop": 152.0,
-      "weight_pct": 54.2,
-      "shares": 129
-    },
-    {
-      "ticker": "KO",
-      "sector": "XLP",
-      "composite_score": 3.7,
-      "entry_price": 96.09,
-      "stop": 91.37,
-      "weight_pct": 14.7,
-      "shares": 61
-    },
-    {
-      "ticker": "COST",
-      "sector": "XLP",
-      "composite_score": 4.9,
-      "entry_price": 1093.83,
-      "stop": 1041.41,
-      "weight_pct": 11.1,
-      "shares": 4
-    },
-    {
-      "ticker": "PG",
-      "sector": "XLP",
-      "composite_score": 5.0,
-      "entry_price": 167.85,
-      "stop": 159.51,
-      "weight_pct": 10.8,
-      "shares": 25
-    },
-    {
-      "ticker": "MO",
-      "sector": "XLP",
-      "composite_score": 5.9,
-      "entry_price": 74.68,
-      "stop": 70.46,
-      "weight_pct": 9.2,
-      "shares": 49
-    }
-  ]
+  "leaders": [],
+  "candidates": []
 }
