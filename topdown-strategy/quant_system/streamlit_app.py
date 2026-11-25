@@ -76,6 +76,7 @@ import journal_charts as jc
 from qs_config import TP1_PCT as _TP1_PCT, TP2_PCT as _TP2_PCT
 import broker_import
 import market_clock
+import mobile_ui
 
 st.set_page_config(page_title="TopDown Quant System", page_icon="📊", layout="wide")
 
@@ -104,6 +105,17 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
+
+def _detect_mobile() -> bool:
+    try:
+        ua = st.context.headers.get("User-Agent")
+    except Exception:          # st.context가 없는 환경
+        ua = None
+    return mobile_ui.is_mobile(ua, st.query_params.get("view"))
+
+
+IS_MOBILE = _detect_mobile()
+st.markdown(mobile_ui.CSS, unsafe_allow_html=True)
 
 CACHE_TTL = 900  # 15분
 
@@ -303,7 +315,7 @@ def _show_flash(key: str) -> None:
         getattr(st, msg[0])(msg[1])
 
 
-def _select_table(styled, ids: tuple, key_base: str, config: dict):
+def _select_table(styled, ids: tuple, key_base: str, config: dict, mobile_columns: list | None = None):
     """행 하나를 선택할 수 있는 표를 그리고 선택된 행의 id(없으면 None)를 돌려준다.
 
     목록 구성(종료/보관 등으로 행이 바뀜)이 달라지면 표 key를 바꿔 이전 선택 표시가 엉뚱한 행에 남지 않게 한다.
@@ -312,8 +324,9 @@ def _select_table(styled, ids: tuple, key_base: str, config: dict):
     if st.session_state.get(ids_key) != ids:
         st.session_state[ids_key] = ids
         st.session_state[ver_key] = st.session_state.get(ver_key, 0) + 1
+    extra = {"column_order": mobile_columns} if (IS_MOBILE and mobile_columns) else {}
     ev = st.dataframe(styled, column_config=config, hide_index=True, use_container_width=True,
-                      on_select="rerun", selection_mode="single-row", key=f"{key_base}_{st.session_state[ver_key]}")
+                      on_select="rerun", selection_mode="single-row", key=f"{key_base}_{st.session_state[ver_key]}", **extra)
     rows = ev.selection.rows
     return ids[rows[0]] if rows and rows[0] < len(ids) else None
 
@@ -697,8 +710,10 @@ def _open_last_closes(open_df: pd.DataFrame) -> dict:
     return out
 
 
-def _plot(fig) -> None:
-    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+def _plot(fig, drop_point_labels: bool = False) -> None:
+    if IS_MOBILE:
+        fig = mobile_ui.tune_figure(fig, drop_point_labels)
+    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False, "scrollZoom": False})
 
 
 def _period_picker(trades_df, signals_df):
@@ -792,7 +807,7 @@ def _render_dashboard(trades_df, exits_df, signals_df, open_trades, closed_res_a
     with c4:
         st.markdown("**⏱ 보유일 vs 손익률** (점 크기 = 손익 금액)")
         if res_p["return_pct"].notna().any():
-            _plot(jc.fig_scatter(res_p))
+            _plot(jc.fig_scatter(res_p), drop_point_labels=True)
         else:
             st.caption("종료된 거래가 없습니다.")
 
@@ -1230,9 +1245,15 @@ with st.sidebar:
         st.caption(f"조회 시각: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         st.caption("데이터: yfinance (지연 시세) · 캐시 15분")
 
-st.title("📊 TopDownQuantSystem — 모멘텀 랭킹 + Runner 대시보드")
-st.caption("MarketRegimeDetector → SectorRotationEngine → MomentumRanker → ExecutionEngine/RiskManager "
-           "순서로 실시간 매수 후보를 계산합니다. (12-1M 모멘텀 · 유휴자금 폭포수배분 · ATR손절/분할익절/Runner추세추종)")
+if IS_MOBILE:
+    # 휴대폰은 사이드바가 접혀 있으므로 장 상태를 본문 맨 위에 보여준다. 긴 설명문은 뺀다.
+    st.title("📊 TopDown Quant")
+    _render_market_clock()
+    st.caption("왼쪽 위 >> 버튼: 포지션 등록 · 스크리닝")
+else:
+    st.title("📊 TopDownQuantSystem — 모멘텀 랭킹 + Runner 대시보드")
+    st.caption("MarketRegimeDetector → SectorRotationEngine → MomentumRanker → ExecutionEngine/RiskManager "
+               "순서로 실시간 매수 후보를 계산합니다. (12-1M 모멘텀 · 유휴자금 폭포수배분 · ATR손절/분할익절/Runner추세추종)")
 
 # ================================================================
 # 매매일지 현황 (사이드바에서 등록한 포지션의 매수/매도 정보를 메인 화면에 표시)
@@ -1240,9 +1261,10 @@ st.caption("MarketRegimeDetector → SectorRotationEngine → MomentumRanker →
 # 사이드바에서 '🔍 스크리닝' 탭을 보는 중에는 매매일지 관련 정보로 화면이 복잡해지지 않도록
 # '📓 매매일지' 탭이 열려 있을 때만 이 섹션을 렌더링한다.
 if tab_journal.open:
-    st.header("📓 매매일지 현황", divider="gray")
-    st.caption("사이드바 '매매일지' 탭에서 등록/조회한 포지션의 매수·매도 정보입니다. "
-               "🔔 표시는 확인 대기 중인 신규 시그널입니다.")
+    if not IS_MOBILE:
+        st.header("📓 매매일지 현황", divider="gray")
+        st.caption("사이드바 '매매일지' 탭에서 등록/조회한 포지션의 매수·매도 정보입니다. "
+                   "🔔 표시는 확인 대기 중인 신규 시그널입니다.")
 
     # ---- 보유 현황 요약: 투자중(OPEN)인 종목 기준 총 투자금액/평가금액/수익률/섹터 비중 ----
     if not open_trades.empty:
@@ -1264,25 +1286,30 @@ if tab_journal.open:
         total_pnl = total_value - total_cost
         total_pnl_pct = (total_pnl / total_cost * 100) if total_cost > 0 else 0.0
 
-        st.subheader("📊 보유 현황 요약 (진행중 포지션 기준)")
-        s1, s2, s3 = st.columns(3)
-        s1.metric("총 투자금액(매입원가)", f"${total_cost:,.0f}")
-        s2.metric("평가금액", f"${total_value:,.0f}")
-        _pc = KR_UP if total_pnl > 0 else KR_DOWN if total_pnl < 0 else "inherit"
-        s3.markdown(f"<div style='font-size:13px;opacity:.7'>평가손익</div>"
-                    f"<div style='font-size:22px;font-weight:600;color:{_pc}'>${total_pnl:+,.0f} "
-                    f"<span style='font-size:15px'>({total_pnl_pct:+.2f}%)</span></div>", unsafe_allow_html=True)
+        if IS_MOBILE:
+            st.markdown(mobile_ui.summary_html(total_cost, total_value, total_pnl, total_pnl_pct, KR_UP, KR_DOWN),
+                        unsafe_allow_html=True)
+        else:
+            st.subheader("📊 보유 현황 요약 (진행중 포지션 기준)")
+        s1, s2, s3 = (None, None, None) if IS_MOBILE else st.columns(3)
+        if not IS_MOBILE:
+            s1.metric("총 투자금액(매입원가)", f"${total_cost:,.0f}")
+            s2.metric("평가금액", f"${total_value:,.0f}")
+            _pc = KR_UP if total_pnl > 0 else KR_DOWN if total_pnl < 0 else "inherit"
+            s3.markdown(f"<div style='font-size:13px;opacity:.7'>평가손익</div>"
+                        f"<div style='font-size:22px;font-weight:600;color:{_pc}'>${total_pnl:+,.0f} "
+                        f"<span style='font-size:15px'>({total_pnl_pct:+.2f}%)</span></div>", unsafe_allow_html=True)
 
-        sector_alloc = summary_df.groupby("sector")["mkt_value"].sum().sort_values(ascending=False)
-        sector_pct = (sector_alloc / total_value * 100) if total_value > 0 else sector_alloc
-        alloc_df = pd.DataFrame({
-            "평가금액": sector_alloc.map(lambda v: f"${v:,.0f}"),
-            "비중": sector_pct.map(lambda v: f"{v:.1f}%"),
-        })
-        alloc_df.index.name = "섹터"
-        st.caption("섹터 비중 (평가금액 기준)")
-        st.dataframe(alloc_df, use_container_width=True)
-        st.divider()
+            sector_alloc = summary_df.groupby("sector")["mkt_value"].sum().sort_values(ascending=False)
+            sector_pct = (sector_alloc / total_value * 100) if total_value > 0 else sector_alloc
+            alloc_df = pd.DataFrame({
+                "평가금액": sector_alloc.map(lambda v: f"${v:,.0f}"),
+                "비중": sector_pct.map(lambda v: f"{v:.1f}%"),
+            })
+            alloc_df.index.name = "섹터"
+            st.caption("섹터 비중 (평가금액 기준)")
+            st.dataframe(alloc_df, use_container_width=True)
+            st.divider()
 
     _show_flash("flash_journal")
     _render_broker_import(trades_df)
@@ -1293,13 +1320,10 @@ if tab_journal.open:
         p_start, p_end, p_pick = _period_picker(trades_df, signals_df)
         closed_res_all = (jr.trade_results(closed_trades, exits_df, signals_df) if not closed_trades.empty
                           else pd.DataFrame())
-        tab_dash, tab_open, tab_closed, tab_history, tab_div = st.tabs([
-            "📊 대시보드",
-            f"🟢 진행중 ({len(open_trades)})",
-            f"⚫ 종료 ({len(closed_trades)})",
-            f"📜 보관함 ({len(archived_trades)})",
-            "💵 배당·ETF",
-        ])
+        tab_dash, tab_open, tab_closed, tab_history, tab_div = st.tabs(
+            ["대시보드", f"진행중 {len(open_trades)}", f"종료 {len(closed_trades)}", "보관함", "배당·ETF"] if IS_MOBILE else
+            ["📊 대시보드", f"🟢 진행중 ({len(open_trades)})", f"⚫ 종료 ({len(closed_trades)})",
+             f"📜 보관함 ({len(archived_trades)})", "💵 배당·ETF"])
 
         with tab_dash:
             _render_dashboard(trades_df, exits_df, signals_df, open_trades, closed_res_all, p_start, p_end)
@@ -1316,7 +1340,8 @@ if tab_journal.open:
                 open_tbl = _open_table_rows(open_trades, signals_df)
                 sel_id = _select_table(
                     _style_open_table(open_tbl), tuple(open_trades["id"]), "open_tbl",
-                    {"종목": _TICKER_LINK, "시그널": st.column_config.TextColumn(width="small")})
+                    {"종목": _TICKER_LINK, "시그널": st.column_config.TextColumn(width="small")},
+                    mobile_columns=mobile_ui.OPEN_TABLE_COLUMNS)
                 st.caption("행을 선택하면 아래에 매도 기록·수정·보관이 열립니다. 색상은 한국식(상승 빨강 · 하락 파랑)입니다.")
                 if sel_id is not None:
                     _render_open_detail(open_trades[open_trades["id"] == sel_id].iloc[0], signals_df, exits_df)
@@ -1353,7 +1378,8 @@ if tab_journal.open:
                     _smap(closed_tbl.style, kr_style, ["손익률(%)", "R배수"])
                     .format({"매수가": "{:.2f}", "평균 매도가": "{:.2f}", "보유일": "{:.0f}일",
                              "손익률(%)": "{:+.2f}%", "R배수": "{:+.2f}R"}, na_rep="-"),
-                    tuple(shown["id"]), "closed_tbl", {"종목": _TICKER_LINK})
+                    tuple(shown["id"]), "closed_tbl", {"종목": _TICKER_LINK},
+                    mobile_columns=mobile_ui.CLOSED_TABLE_COLUMNS)
                 st.caption("매도일·평균 매도가는 기록한 매도 내역(없으면 체결 확인된 시그널)의 마지막 매도일과 수량 가중 평균가입니다. "
                            "손익률 = 평균 매도가 / 매수가 − 1, R배수 = (평균 매도가 − 매수가) / (매수가 − 초기 손절가). "
                            "행을 선택하면 매도 내역·복기(실수 태그·교훈)·보관 버튼이 열립니다.")
