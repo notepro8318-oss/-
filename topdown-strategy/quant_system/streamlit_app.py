@@ -582,7 +582,7 @@ def _render_broker_import(trades_df) -> None:
                                             dividends=info["dividends"], ledger=info["ledger"])
         sm = plan["summary"] if "summary" in plan else {"new_lots": 0, "replaced": 0, "existing": 0, "new_sells": 0,
                                                           "to_apply": 0, "dividends": 0, "etf_rows": 0, "fee_updates": 0,
-                                                          "ledger_rows": 0, "to_apply_total": 0}
+                                                          "ledger_rows": 0, "removed": 0, "to_apply_total": 0}
         st.caption(f"파일 기간 {info['start']} ~ {info['end']} · 전체 {info['rows_total']}행 중 매수·매도 {info['rows_trade']}행")
         k = st.columns(4)
         k[0].metric("새 포지션", f"{sm['new_lots']}건")
@@ -590,7 +590,7 @@ def _render_broker_import(trades_df) -> None:
         k[2].metric("추가될 매도", f"{sm['new_sells']}건")
         k[3].metric("이미 반영됨", f"{sm['existing']}건")
         k2 = st.columns(4)
-        k2[0].metric("새 배당금", f"{sm['dividends']}건")
+        k2[0].metric("배당(새·수정)", f"{sm['dividends']}건")
         k2[1].metric("ETF 거래(보유 현황용)", f"{sm['etf_rows']}건")
         k2[2].metric("계좌 잔고 내역", f"{sm['ledger_rows']}건",
                      help="계좌 평가금액·SPY 비교용 숫자(보유수량, 현금 잔고, 입출금 금액)만 저장합니다. 이름·계좌번호는 저장하지 않습니다.")
@@ -610,6 +610,10 @@ def _render_broker_import(trades_df) -> None:
         elif sm["to_apply_total"] == 0:
             st.success("반영할 새 거래가 없습니다. 이미 모두 가져온 파일입니다.")
 
+        if plan["remove_trades"]:
+            st.warning("ETF로 다시 분류해 매매일지에서 빼는 포지션: " + ", ".join(
+                f"{r['ticker']} {r['date']} {r['shares']}주" for r in plan["remove_trades"]) +
+                " — ETF 보유 현황에는 계속 반영됩니다.")
         if plan["excluded_etf"]:
             st.caption("ETF는 시그널 없이 '장기 보유 ETF' 현황에만 반영합니다: " +
                        ", ".join(f"{n} {c}건" for n, c in plan["excluded_etf"].items()))
@@ -639,7 +643,7 @@ def _render_broker_import(trades_df) -> None:
                 _flash("flash_journal", "success",
                        f"가져오기 완료 — 새 포지션 {res['created']}건, 수동 기록 교체 {res['replaced']}건, 매도 {res['exits_added']}건, "
                        f"배당 {res['dividends_added']}건, ETF 거래 {res['etf_added']}건, 계좌 잔고 {res['ledger_added']}건 추가, "
-                       f"수수료 보강 {res['fee_updates']}건.")
+                       f"수수료 보강 {res['fee_updates']}건, ETF 재분류 제거 {res['removed']}건.")
             st.rerun()
 
 

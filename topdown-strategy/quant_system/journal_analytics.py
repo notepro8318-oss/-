@@ -67,13 +67,14 @@ def build_equity(ledger: pd.DataFrame, get_close, get_fx, end=None) -> tuple[pd.
     last = pd.Timestamp(end) if end is not None else pd.Timestamp.today().normalize()
     idx = pd.bdate_range(start, max(last, start))
 
-    cash_usd = _stepped(L, "usd_cash", idx).fillna(0.0)
+    # 첫 보고 이전의 달러 현금은 첫 보고값으로 본다(파일 이전부터 있던 잔고가 갑자기 생긴 수익처럼 보이지 않게)
+    cash_usd = _stepped(L, "usd_cash", idx).bfill().fillna(0.0)
     cash_krw = _stepped(L, "krw_cash", idx).fillna(0.0)
     fx = get_fx()
     fx = fx.reindex(idx.union(fx.index)).ffill().bfill().reindex(idx) if fx is not None and len(fx) else pd.Series(1400.0, index=idx)
 
     values = {}
-    trades = L[(L["ticker"] != "") & L["balance"].notna() & L["side"].isin(["BUY", "SELL"])]
+    trades = L[(L["ticker"] != "") & L["balance"].notna() & L["side"].isin(["BUY", "SELL", "SPLIT"])]
     for ticker, g in trades.groupby("ticker"):
         g = g.sort_values(["date", "no"])
         opening = float(g["balance"].iloc[0] - g["qty"].iloc[0])      # 파일 이전부터 보유하던 수량
@@ -133,6 +134,18 @@ def max_drawdown(growth: pd.Series) -> float:
     return float((growth / growth.cummax() - 1).min())
 
 
+def unadjust_splits(close: pd.Series, splits: pd.Series | None) -> pd.Series:
+    """야후 종가는 과거 가격도 분할 후 기준으로 조정돼 있다. 당시 보유수량과 곱하려면 실제 거래 가격으로 되돌린다."""
+    if splits is None or len(splits) == 0 or close.empty:
+        return close
+    out = close.copy()
+    for day, ratio in splits.items():
+        day = pd.Timestamp(day).tz_localize(None).normalize()
+        if ratio and ratio > 0:
+            out.loc[out.index < day] *= float(ratio)
+    return out
+
+
 def fetch_close(ticker: str, start, adjusted: bool = False) -> pd.Series:
     """일별 종가. adjusted=False면 배당 미조정(보유 평가용), True면 배당 재투자 조정(수익률 비교용)."""
     import yfinance as yf
@@ -145,7 +158,10 @@ def fetch_close(ticker: str, start, adjusted: bool = False) -> pd.Series:
         if isinstance(c, pd.DataFrame):
             c = c.iloc[:, 0]
         c.index = pd.to_datetime(c.index).tz_localize(None)
-        return c.dropna().astype(float)
+        c = c.dropna().astype(float)
+        if not adjusted and not ticker.endswith("=X"):
+            c = unadjust_splits(c, yf.Ticker(ticker).splits)
+        return c
     except Exception:
         return pd.Series(dtype=float)
 
